@@ -9,6 +9,7 @@ import {
   WorkflowStep,
   createWorkflowStep,
   cancelExecution,
+  getExecution,
   listAgents,
   listExecutionSteps,
   listWorkflowSteps,
@@ -216,6 +217,31 @@ export function WorkflowDesignClient({ workflow }: WorkflowDesignClientProps) {
     });
   };
 
+  const pollExecution = async (executionId: string) => {
+    const terminalStatuses = new Set(["completed", "failed", "cancelled", "waiting_approval"]);
+
+    // Simple polling loop: refresh execution + steps until we reach
+    // a terminal status. This lets the UI show per-step state changes
+    // while the backend orchestrator is still running.
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      try {
+        const latest = await getExecution(executionId);
+        setExecution(latest);
+        await refreshExecutionSteps(latest);
+
+        if (!latest.status || terminalStatuses.has(latest.status)) {
+          break;
+        }
+      } catch (err) {
+        console.error("Failed to poll execution", err);
+        break;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+    }
+  };
+
   const handleRunWorkflow = async () => {
     if (!workflow) return;
     // Switch to execute mode when starting a run
@@ -226,6 +252,7 @@ export function WorkflowDesignClient({ workflow }: WorkflowDesignClientProps) {
       const exec = await runWorkflow(workflow.id, { input: {} });
       setExecution(exec);
       await refreshExecutionSteps(exec);
+      await pollExecution(exec.id);
     } catch (e) {
       console.error(e);
       alert("Không thể chạy workflow. Vui lòng kiểm tra cấu hình.");
@@ -574,6 +601,30 @@ export function WorkflowDesignClient({ workflow }: WorkflowDesignClientProps) {
                         <div className={`absolute left-[11px] top-8 h-full w-[2px] ${baseConnectorColor}`} />
                       )}
 
+                      {/* Status circle, aligned with the left connector line */}
+                      <div className="absolute left-0 top-1 flex size-6 items-center justify-center rounded-full ring-4 ring-surface-dark z-10">
+                        {isDone && (
+                          <span className="flex size-6 items-center justify-center rounded-full bg-primary text-white">
+                            <span className="material-symbols-outlined text-[14px] font-bold">check</span>
+                          </span>
+                        )}
+                        {isRunning && (
+                          <span className="flex size-6 items-center justify-center rounded-full bg-surface-dark border-2 border-primary text-primary animate-pulse">
+                            <span className="size-2 rounded-full bg-primary" />
+                          </span>
+                        )}
+                        {!isDone && !isRunning && !isError && (
+                          <span className="flex size-6 items-center justify-center rounded-full bg-[#282b39] text-[#9da1b9]">
+                            <span className="size-2 rounded-full bg-[#565b73]" />
+                          </span>
+                        )}
+                        {isError && (
+                          <span className="flex size-6 items-center justify-center rounded-full bg-red-500 text-white">
+                            <span className="material-symbols-outlined text-[14px]">warning</span>
+                          </span>
+                        )}
+                      </div>
+
                       <button
                         type="button"
                         onClick={() =>
@@ -588,34 +639,12 @@ export function WorkflowDesignClient({ workflow }: WorkflowDesignClientProps) {
                         onDragEnd={() => {
                           setDraggingStepId(null);
                         }}
-                        className={`flex items-start justify-between rounded-lg p-3 w-full text-left transition-colors relative group/card ${
+                        className={`flex items-start justify-between rounded-lg p-3 w-full text-left transition-colors group/card ${
                           isActive
                             ? "bg-primary/10 border border-primary/40 shadow-lg shadow-primary/10"
                             : "hover:bg-[#282b39]/50"
                         }`}
                       >
-                        <div className="absolute left-0 top-1 flex size-6 items-center justify-center rounded-full ring-4 ring-surface-dark z-10">
-                          {isDone && (
-                            <span className="flex size-6 items-center justify-center rounded-full bg-primary text-white">
-                              <span className="material-symbols-outlined text-[14px] font-bold">check</span>
-                            </span>
-                          )}
-                          {isRunning && (
-                            <span className="flex size-6 items-center justify-center rounded-full bg-surface-dark border-2 border-primary text-primary animate-pulse">
-                              <span className="size-2 rounded-full bg-primary" />
-                            </span>
-                          )}
-                          {!isDone && !isRunning && !isError && (
-                            <span className="flex size-6 items-center justify-center rounded-full bg-[#282b39] text-[#9da1b9]">
-                              <span className="size-2 rounded-full bg-[#565b73]" />
-                            </span>
-                          )}
-                          {isError && (
-                            <span className="flex size-6 items-center justify-center rounded-full bg-red-500 text-white">
-                              <span className="material-symbols-outlined text-[14px]">warning</span>
-                            </span>
-                          )}
-                        </div>
                         <div className="flex gap-3 ml-2 flex-1">
                           <div className="size-10 rounded-lg bg-[#282b39] flex items-center justify-center">
                             <span className="material-symbols-outlined text-primary">smart_toy</span>

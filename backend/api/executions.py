@@ -2,12 +2,12 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db import get_session
+from db import AsyncSessionLocal, get_session
 from models.db_models import (
     Workflow as WorkflowModel,
     WorkflowExecution as WorkflowExecutionModel,
@@ -69,24 +69,64 @@ def _attach_llm_to_session(session: AsyncSession) -> None:
         session.info["llm_provider"] = get_llm_provider()
 
 
+async def _run_execution_background(execution_id: str) -> None:
+  """Background task that continues executing a workflow until pause or end.
+
+  This runs in its own database session so the HTTP request can return
+  immediately while steps are being processed.
+  """
+
+  if AsyncSessionLocal is None:  # pragma: no cover - env misconfig
+      return
+
+  async with AsyncSessionLocal() as session:  # type: ignore[misc]
+      # Create a fresh LLM provider for this session
+      llm = get_llm_provider()
+      orchestrator = Orchestrator(session=session, llm=llm)
+
+      execution = await session.get(WorkflowExecutionModel, execution_id)
+      if not execution:
+          return
+
+      # Ensure we have a workflow to run; in current orchestrator
+      # implementation this is only used for the initial start, but
+      # we keep the guard for safety.
+      workflow = await session.get(WorkflowModel, execution.workflow_id)
+      if not workflow:
+          execution.status = "failed"
+          await session.commit()
+          return
+
+      await orchestrator.run_until_pause_or_end(execution)
+
+
 @router.post("/workflows/{workflow_id}/run", response_model=ExecutionOut, status_code=201)
 async def run_workflow(
     workflow_id: str,
     payload: RunInput,
+    background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_session),
 ):
     workflow = await session.get(WorkflowModel, workflow_id)
     if not workflow:
         raise HTTPException(status_code=404, detail="Workflow not found")
 
-    _attach_llm_to_session(session)
-    orchestrator = Orchestrator(session=session, llm=session.info["llm_provider"])
-    execution = await orchestrator.start_execution(
-        workflow=workflow,
-        project_id=str(workflow.project_id) if workflow.project_id else None,
+    # Create a new execution record with status "running" and return it
+    # immediately, then continue processing steps in the background.
+    execution = WorkflowExecutionModel(
+        workflow_id=workflow.id,
+        project_id=workflow.project_id,
         user_id=None,
-        input_payload=payload.input,
+        status="running",
+        input=payload.input,
     )
+    session.add(execution)
+    await session.commit()
+    await session.refresh(execution)
+
+    # Kick off background processing for this execution.
+    background_tasks.add_task(_run_execution_background, str(execution.id))
+
     return execution
 
 
