@@ -62,3 +62,6 @@ supabase/.temp/
 .supabase/
 docs/screens/
 Prompts/
+
+# Local repo transcripts
+repo-md.md
