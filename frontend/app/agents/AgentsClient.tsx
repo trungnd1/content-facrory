@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
     Agent,
     AgentCreatePayload,
+    AgentUpdatePayload,
     LLMProviderInfo,
     createAgent,
     updateAgent,
@@ -581,7 +582,7 @@ export function AgentsClient({ initialAgents }: AgentsClientProps) {
                                         const needsUpdate = !!outputSchema && !hasOutputSchemaKeys;
 
                                         if (needsUpdate) {
-                                            const updatePayload: AgentCreatePayload = {};
+                                            const updatePayload: AgentUpdatePayload = {};
                                             if (inputSchema) {
                                                 updatePayload.input_schema = inputSchema;
                                             }

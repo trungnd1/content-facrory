@@ -12,6 +12,126 @@ body {
 	font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
+/* Markdown preview (Tiptap) */
+.prose-content h1 {
+	font-size: 1.5rem;
+	font-weight: 800;
+	margin: 1.25rem 0 0.75rem;
+}
+
+.prose-content h2 {
+	font-size: 1.25rem;
+	font-weight: 800;
+	margin: 1.25rem 0 0.75rem;
+}
+
+.prose-content h3 {
+	font-size: 1.1rem;
+	font-weight: 700;
+	margin: 1rem 0 0.5rem;
+}
+
+.prose-content p {
+	margin: 0.5rem 0;
+}
+
+.prose-content ul,
+.prose-content ol {
+	margin: 0.5rem 0 0.75rem;
+	padding-left: 1.25rem;
+}
+
+.prose-content ul {
+	list-style: disc;
+}
+
+.prose-content ol {
+	list-style: decimal;
+}
+
+.prose-content li {
+	margin: 0.25rem 0;
+}
+
+/* Nested UL borders by level (Tiptap strips inline styles, so use CSS) */
+/* Level 1: no border formatting */
+
+/* Level 1 (top-level UL only) */
+.prose-content > ul {
+	border-top: solid 4px #646464;
+	padding-left: 20px;
+}
+
+/* Level 2 */
+.prose-content ul ul {
+	border-left: solid 4px #646464;
+	padding-left: 25px;
+}
+
+/* Level 3 */
+.prose-content ul ul ul {
+	border-left: solid 3px #646464;
+	padding-left: 25px;
+}
+
+/* Level 4 */
+.prose-content ul ul ul ul {
+	border-left: dashed 2px #646464;
+	padding-left: 25px;
+}
+
+/* Level 5+ (keep 1px) */
+.prose-content ul ul ul ul ul {
+	border-left: dashed 1px #646464;
+	padding-left: 25px;
+}
+.prose-content ul ul ul ul ul ul,
+.prose-content ul ul ul ul ul ul ul,
+.prose-content ul ul ul ul ul ul ul ul,
+.prose-content ul ul ul ul ul ul ul ul ul {
+	border-left: dashed 1px #646464;
+	padding-left: 25px;
+}
+
+.prose-content code {
+	font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+	background: rgba(255, 255, 255, 0.06);
+	padding: 0.1rem 0.25rem;
+	border-radius: 0.25rem;
+}
+
+.prose-content pre {
+	background: #111827;
+	border: 1px solid #1f2937;
+	border-radius: 0.5rem;
+	padding: 0.75rem;
+	overflow-x: auto;
+	margin: 0.75rem 0;
+}
+
+.prose-content pre code {
+	background: transparent;
+	padding: 0;
+}
+
+.prose-content table {
+	width: 100%;
+	border-collapse: collapse;
+	margin: 0.75rem 0;
+}
+
+.prose-content th,
+.prose-content td {
+	border: 1px solid #1f2937;
+	padding: 0.5rem;
+	vertical-align: top;
+}
+
+.prose-content th {
+	background: rgba(255, 255, 255, 0.04);
+	font-weight: 700;
+}
+
 /* Thin dark scrollbars for agent side panel and code-like areas */
 .agent-scroll::-webkit-scrollbar {
 	width: 6px;

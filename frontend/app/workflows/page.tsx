@@ -12,7 +12,7 @@ export default async function WorkflowsPage() {
         listWorkflows().catch(() => []),
     ]);
 
-    const projectMap = new Map(projects.map((p) => [p.id, p.name as string]));
+    const projectMap = new Map(projects.map((p): [string, string] => [p.id, (p.name ?? "") as string]));
 
     return (
         <div className="relative flex h-screen w-full overflow-hidden bg-background-light dark:bg-background-dark">

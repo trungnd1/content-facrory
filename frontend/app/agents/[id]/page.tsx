@@ -22,7 +22,7 @@ export default function AgentDetailPage() {
         const data = await getAgent(agentId);
         setName(data.name ?? "");
         setDescription(data.description ?? "");
-        setLlmModel(data.llm_model ?? "");
+        setLlmModel(data.model ?? "");
       } catch (err: any) {
         setError(err.message ?? "Failed to load agent");
       } finally {
@@ -42,7 +42,7 @@ export default function AgentDetailPage() {
       await updateAgent(agentId, {
         name: name.trim() || undefined,
         description: description.trim() || undefined,
-        llm_model: llmModel.trim() || undefined,
+        model: llmModel.trim() || undefined,
       });
       router.push("/agents");
     } catch (err: any) {

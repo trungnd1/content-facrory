@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { MarkdownPreview } from "@/components/MarkdownPreview";
+import { formatAgentOutputToMarkdown } from "@/lib/previewFormat";
 import {
   Agent,
   Workflow,
@@ -130,6 +132,10 @@ export function WorkflowDesignClient({ workflow }: WorkflowDesignClientProps) {
     () => steps.find((s) => s.id === activeStepId) ?? null,
     [steps, activeStepId],
   );
+
+  const previewMarkdown = useMemo(() => {
+    return formatAgentOutputToMarkdown(activeStep?.output);
+  }, [activeStep?.output, activeStep?.id]);
 
   const completedCount = steps.filter((s) => s.status === "done").length;
   const progressPercent = steps.length > 0 ? Math.round((completedCount / steps.length) * 100) : 0;
@@ -1010,34 +1016,14 @@ export function WorkflowDesignClient({ workflow }: WorkflowDesignClientProps) {
                         Chưa có output cho step này. Bấm "Run Workflow" để chạy.
                       </p>
                     )}
-                    {typeof activeStep.output === "string" && activeStep.output && (
-                      <p className="text-base text-slate-100 whitespace-pre-line">{activeStep.output}</p>
+                    {activeStep.output && previewMarkdown.trim() && (
+                      <div className="rounded-lg border border-[#1f2937] bg-[#0b0d12] p-4">
+                        <MarkdownPreview markdown={previewMarkdown} />
+                      </div>
                     )}
-                    {activeStep.output &&
-                      typeof activeStep.output === "object" &&
-                      !Array.isArray(activeStep.output) && (
-                        (() => {
-                          const keys = Object.keys(activeStep.output as Record<string, unknown>);
-                          const hasOnlyRawOutput =
-                            keys.length === 1 &&
-                            keys[0] === "raw_output" &&
-                            typeof (activeStep.output as any).raw_output === "string";
-
-                          if (hasOnlyRawOutput) {
-                            return (
-                              <p className="text-base text-slate-100 whitespace-pre-line">
-                                {(activeStep.output as any).raw_output}
-                              </p>
-                            );
-                          }
-
-                          return (
-                            <pre className="text-xs bg-[#111827] rounded-lg p-4 overflow-x-auto border border-[#1f2937]">
-                              {JSON.stringify(activeStep.output, null, 2)}
-                            </pre>
-                          );
-                        })()
-                      )}
+                    {activeStep.output && !previewMarkdown.trim() && (
+                      <p className="text-[#5c6076] text-sm">Không có nội dung để preview.</p>
+                    )}
                   </div>
                 )}
 

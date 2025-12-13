@@ -162,6 +162,20 @@ export type AgentCreatePayload = {
   is_active?: boolean;
 };
 
+export type AgentUpdatePayload = {
+  name?: string;
+  description?: string;
+  type?: string;
+  model?: string;
+  prompt_system?: string;
+  prompt_template?: string;
+  input_schema?: any;
+  output_schema?: any;
+  temperature?: number;
+  max_tokens?: number;
+  is_active?: boolean;
+};
+
 export function createAgent(payload: AgentCreatePayload) {
   return request<Agent>("/agents", {
     method: "POST",
@@ -169,7 +183,7 @@ export function createAgent(payload: AgentCreatePayload) {
   });
 }
 
-export function updateAgent(id: string, payload: AgentCreatePayload) {
+export function updateAgent(id: string, payload: AgentUpdatePayload) {
   return request<Agent>(`/agents/${id}`, {
     method: "PUT",
     body: JSON.stringify(payload),
