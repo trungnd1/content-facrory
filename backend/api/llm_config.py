@@ -49,6 +49,7 @@ async def list_llm_providers() -> List[LLMProviderOut]:
             name="OpenAI",
             enabled=_provider_enabled("openai"),
             models=[
+                LLMModelOut(id="gpt-5.2-preview", label="GPT-5.2 (Preview)"),
                 LLMModelOut(id="gpt-4.1-mini", label="GPT-4.1 Mini"),
                 LLMModelOut(id="gpt-4.1", label="GPT-4.1"),
                 LLMModelOut(id="gpt-4o-mini", label="GPT-4o Mini"),
@@ -63,6 +64,7 @@ async def list_llm_providers() -> List[LLMProviderOut]:
             name="OpenRouter",
             enabled=_provider_enabled("openrouter"),
             models=[
+                LLMModelOut(id="openai/gpt-5.2-preview", label="OpenAI GPT-5.2 (Preview) (via OpenRouter)"),
                 LLMModelOut(id="openai/gpt-4.1-mini", label="OpenAI GPT-4.1 Mini (via OpenRouter)"),
                 LLMModelOut(id="openai/gpt-4o-mini", label="OpenAI GPT-4o Mini (via OpenRouter)"),
                 LLMModelOut(id="anthropic/claude-3.5-sonnet", label="Claude 3.5 Sonnet"),
