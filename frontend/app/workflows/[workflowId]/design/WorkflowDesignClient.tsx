@@ -11,14 +11,79 @@ import {
   WorkflowStep,
   createWorkflowStep,
   cancelExecution,
+  getAgent,
   getExecution,
   listAgents,
   listExecutionSteps,
   listWorkflowSteps,
   runWorkflow,
+  updateWorkflowWcs,
   updateWorkflow,
   updateWorkflowStep,
 } from "@/lib/api";
+
+type WorkflowConfig = Record<string, Record<string, any>>;
+
+function tryParseLooseJsonObject(text: string): Record<string, any> | null {
+  if (!text) return null;
+
+  // Strip markdown fences if present
+  const withoutFences = text.replace(/```[a-zA-Z]*\s*([\s\S]*?)```/g, "$1");
+
+  // Remove JS-style comments (common in prompts)
+  const withoutComments = withoutFences
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "");
+
+  // Remove trailing commas before } or ] (JSON5-like prompts)
+  const normalized = withoutComments.replace(/,\s*([}\]])/g, "$1");
+
+  try {
+    const parsed = JSON.parse(normalized);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, any>;
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+function extractConfigFromPromptSystem(promptSystem?: string | null): Record<string, any> | null {
+  if (!promptSystem) return null;
+
+  const idx = promptSystem.toLowerCase().indexOf("input");
+  if (idx === -1) return null;
+
+  const start = promptSystem.indexOf("{", idx);
+  if (start === -1) return null;
+
+  let depth = 0;
+  let end = -1;
+  for (let i = start; i < promptSystem.length; i += 1) {
+    const ch = promptSystem[i];
+    if (ch === "{") depth += 1;
+    if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        end = i;
+        break;
+      }
+    }
+  }
+
+  if (end === -1) return null;
+
+  const jsonText = promptSystem.slice(start, end + 1);
+
+  const parsed = tryParseLooseJsonObject(jsonText);
+  const config = parsed?.config;
+  if (config && typeof config === "object" && !Array.isArray(config)) {
+    return config as Record<string, any>;
+  }
+
+  return null;
+}
 
 function getAgentOutputKeys(agent: Agent | undefined): string[] {
   if (!agent) return [];
@@ -125,6 +190,10 @@ export function WorkflowDesignClient({ workflow }: WorkflowDesignClientProps) {
   const [execution, setExecution] = useState<WorkflowExecution | null>(null);
   const [showAgentModal, setShowAgentModal] = useState(false);
 
+  const [workflowConfig, setWorkflowConfig] = useState<WorkflowConfig>({});
+  const [showWcfModal, setShowWcfModal] = useState(false);
+  const [workflowConfigDraft, setWorkflowConfigDraft] = useState<WorkflowConfig | null>(null);
+
   // Drag state for step reordering
   const [draggingStepId, setDraggingStepId] = useState<string | null>(null);
 
@@ -156,6 +225,12 @@ export function WorkflowDesignClient({ workflow }: WorkflowDesignClientProps) {
 
       setLoading(true);
       try {
+        // Start from persisted WCS (if available) so user edits survive refresh.
+        const persistedWcs = (workflow as any)?.wcs;
+        if (!cancelled && persistedWcs && typeof persistedWcs === "object" && !Array.isArray(persistedWcs)) {
+          setWorkflowConfig(persistedWcs as WorkflowConfig);
+        }
+
         const [stepsRes, agentsRes] = await Promise.all([
           listWorkflowSteps(workflow.id),
           listAgents(),
@@ -175,6 +250,40 @@ export function WorkflowDesignClient({ workflow }: WorkflowDesignClientProps) {
         setSteps(uiSteps);
         // Default: all nodes collapsed (no active step)
         setActiveStepId(null);
+
+        // Build per-workflow config schema by fetching each agent's system instruction
+        // and extracting `config` from its INPUT schema.
+        const orderedAgentIds = uiSteps
+          .filter((s) => s.type === "AGENT" && s.agent_id)
+          .map((s) => s.agent_id as string);
+        const uniqueAgentIds = Array.from(new Set(orderedAgentIds));
+
+        if (uniqueAgentIds.length > 0) {
+          const pairs = await Promise.all(
+            uniqueAgentIds.map(async (agentId) => {
+              try {
+                const agent = await getAgent(agentId);
+                const cfg = extractConfigFromPromptSystem(agent.prompt_system);
+                return [agentId, cfg] as const;
+              } catch (e) {
+                console.error("Failed to load agent for WCS", agentId, e);
+                return [agentId, null] as const;
+              }
+            }),
+          );
+
+          if (!cancelled) {
+            setWorkflowConfig((prev) => {
+              const next: WorkflowConfig = { ...prev };
+              for (const [agentId, cfg] of pairs) {
+                if (!cfg) continue;
+                // Preserve any existing user edits, but add new keys from schema defaults.
+                next[agentId] = { ...cfg, ...(prev[agentId] ?? {}) };
+              }
+              return next;
+            });
+          }
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -255,7 +364,11 @@ export function WorkflowDesignClient({ workflow }: WorkflowDesignClientProps) {
     setRunning(true);
     setSaving(true);
     try {
-      const exec = await runWorkflow(workflow.id, { input: {} });
+      const exec = await runWorkflow(workflow.id, {
+        input: {
+          __workflow_wcs: workflowConfig,
+        },
+      });
       setExecution(exec);
       await refreshExecutionSteps(exec);
       await pollExecution(exec.id);
@@ -294,44 +407,31 @@ export function WorkflowDesignClient({ workflow }: WorkflowDesignClientProps) {
     }
   };
 
-  const handleAddInputNode = async () => {
+  const openWcfModal = () => {
+    // Flat key/value configs, safe to clone via JSON.
+    const draft = JSON.parse(JSON.stringify(workflowConfig || {})) as WorkflowConfig;
+    setWorkflowConfigDraft(draft);
+    setShowWcfModal(true);
+  };
+
+  const closeWcfModal = () => {
+    setShowWcfModal(false);
+    setWorkflowConfigDraft(null);
+  };
+
+  const saveWcfModal = async () => {
     if (!workflow) return;
 
-    // If an Input (Generic) node already exists, just focus it
-    const existingInput = steps.find(
-      (s) => s.type === "GENERIC" && s.name.toLowerCase() === "input",
-    );
-    if (existingInput) {
-      setActiveStepId(existingInput.id);
-      setShowAgentModal(false);
-      return;
-    }
+    const nextWcs = (workflowConfigDraft ?? workflowConfig) as WorkflowConfig;
 
     setSaving(true);
     try {
-      const maxOrder = steps.reduce((max, s) => Math.max(max, s.step_number), 0);
-      const newStep = await createWorkflowStep(workflow.id, {
-        step_number: maxOrder + 1,
-        name: "Input",
-        type: "GENERIC",
-        agent_id: null,
-        requires_approval: false,
-        config: {},
-      });
-
-      // Append new Input step then move it to the top via reorder
-      const withNew: UIStep[] = [
-        ...steps,
-        { ...newStep, status: "pending" as StepStatus, agentName: undefined },
-      ];
-      setSteps(withNew);
-      setActiveStepId(newStep.id);
-      setShowAgentModal(false);
-
-      // Reorder to make Input the first step, if there were existing steps
-      if (steps.length > 0) {
-        await handleReorderSteps(newStep.id, steps[0].id);
-      }
+      await updateWorkflowWcs(workflow.id, nextWcs);
+      setWorkflowConfig(nextWcs);
+      closeWcfModal();
+    } catch (e) {
+      console.error(e);
+      alert("Không thể lưu Workflow Configuration Schema (WCS). Vui lòng thử lại.");
     } finally {
       setSaving(false);
     }
@@ -526,7 +626,11 @@ export function WorkflowDesignClient({ workflow }: WorkflowDesignClientProps) {
                 <span className="material-symbols-outlined text-[18px]">history</span>
                 History
               </button>
-              <button className="flex h-10 items-center gap-2 rounded-lg border border-[#282b39] bg-transparent px-4 text-sm font-semibold text-white hover:bg-[#282b39] transition-colors">
+              <button
+                type="button"
+                onClick={openWcfModal}
+                className="flex h-10 items-center gap-2 rounded-lg border border-[#282b39] bg-transparent px-4 text-sm font-semibold text-white hover:bg-[#282b39] transition-colors"
+              >
                 <span className="material-symbols-outlined text-[18px]">tune</span>
                 Config
               </button>
@@ -577,6 +681,29 @@ export function WorkflowDesignClient({ workflow }: WorkflowDesignClientProps) {
                 <span className="text-xs text-[#9da1b9]">{steps.length} Steps</span>
               </div>
               <div className="flex-1 overflow-y-auto p-4 space-y-0" id="workflow-steps-list">
+                <button
+                  type="button"
+                  onClick={openWcfModal}
+                  className="mb-4 flex w-full items-start justify-between rounded-lg border border-[#282b39] bg-[#151722] p-3 text-left hover:border-primary/40 hover:bg-[#1a1d2d] transition-colors"
+                >
+                  <div className="flex gap-3 flex-1">
+                    <div className="size-10 rounded-lg bg-[#282b39] flex items-center justify-center">
+                      <span className="material-symbols-outlined text-primary">tune</span>
+                    </div>
+                    <div>
+                      <p className="font-medium text-white text-sm truncate max-w-[220px]">
+                        Workflow Config (WCS)
+                      </p>
+                      <p className="text-xs text-[#9da1b9] truncate max-w-[220px]">
+                        Per-agent config from INPUT schema
+                      </p>
+                    </div>
+                  </div>
+                  <span className="text-xs font-medium px-2 py-1 rounded whitespace-nowrap text-[#9da1b9] bg-[#282b39]">
+                    Edit
+                  </span>
+                </button>
+
                 {steps.map((step, index) => {
                   const isActive = activeStepId === step.id;
                   const isDone = step.status === "done";
@@ -1111,22 +1238,6 @@ export function WorkflowDesignClient({ workflow }: WorkflowDesignClientProps) {
               Chọn một agent để chèn vào cuối workflow. (Vị trí và config chi tiết sẽ chỉnh sau.)
             </p>
             <div className="max-h-80 overflow-y-auto space-y-2">
-              <button
-                type="button"
-                onClick={handleAddInputNode}
-                className="w-full flex items-start gap-3 rounded-lg border border-dashed border-[#565b73] bg-[#151722] px-3 py-2 text-left hover:border-primary/60 hover:bg-[#1a1d2d] transition-colors mb-2"
-              >
-                <div className="size-9 rounded-lg bg-[#282b39] flex items-center justify-center text-primary">
-                  <span className="material-symbols-outlined text-[20px]">input</span>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-white truncate">Input</p>
-                  <p className="text-xs text-[#9da1b9] line-clamp-2">
-                    Generic system node dùng để nhập dữ liệu đầu vào cho workflow.
-                  </p>
-                </div>
-              </button>
-
               {agents.map((agent) => (
                 <button
                   key={agent.id}
@@ -1150,6 +1261,130 @@ export function WorkflowDesignClient({ workflow }: WorkflowDesignClientProps) {
               {agents.length === 0 && (
                 <p className="text-xs text-[#9da1b9]">Chưa có agent nào. Hãy tạo agent trước.</p>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* WCF modal */}
+      {showWcfModal && (
+        <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/60">
+          <div className="w-full max-w-2xl rounded-xl bg-surface-dark border border-[#282b39] shadow-2xl p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-semibold text-white">Workflow Configuration Schema (WCS)</h2>
+              <button
+                type="button"
+                onClick={closeWcfModal}
+                className="text-[#9da1b9] hover:text-white"
+              >
+                <span className="material-symbols-outlined text-[20px]">close</span>
+              </button>
+            </div>
+
+            <p className="text-xs text-[#9da1b9] mb-3">
+              WCS được lấy từ INPUT schema (trường <span className="text-white">config</span>) của từng agent.
+            </p>
+
+            <div className="max-h-[60vh] overflow-y-auto space-y-4 pr-1">
+              {(() => {
+                const orderedAgentIds = steps
+                  .filter((s) => s.type === "AGENT" && s.agent_id)
+                  .map((s) => s.agent_id as string);
+                const uniqueAgentIds = Array.from(new Set(orderedAgentIds));
+
+                if (uniqueAgentIds.length === 0) {
+                  return <p className="text-xs text-[#9da1b9]">Workflow chưa có agent nào.</p>;
+                }
+
+                return uniqueAgentIds.map((agentId) => {
+                  const agentName =
+                    agents.find((a) => a.id === agentId)?.name ?? `Agent ${agentId}`;
+                  const cfg = (workflowConfigDraft ?? workflowConfig)[agentId] ?? {};
+                  const keys = Object.keys(cfg);
+
+                  return (
+                    <div key={agentId} className="rounded-lg border border-[#282b39] bg-[#151722] p-3">
+                      <p className="text-xs font-semibold text-white mb-2">{agentName}</p>
+                      {keys.length === 0 ? (
+                        <p className="text-xs text-[#9da1b9]">
+                          Không tìm thấy <span className="text-white">config</span> trong INPUT schema của agent này.
+                        </p>
+                      ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          {keys.map((key) => {
+                            const value = cfg[key];
+                            const valueType = typeof value;
+
+                            return (
+                              <label key={key} className="block">
+                                <span className="block text-[11px] font-semibold text-[#9da1b9] mb-1">{key}</span>
+                                {valueType === "boolean" ? (
+                                  <input
+                                    type="checkbox"
+                                    checked={Boolean(value)}
+                                    onChange={(e) => {
+                                      const nextVal = e.target.checked;
+                                      setWorkflowConfigDraft((prev) => {
+                                        const base = prev ?? (JSON.parse(JSON.stringify(workflowConfig)) as WorkflowConfig);
+                                        return {
+                                          ...base,
+                                          [agentId]: {
+                                            ...(base[agentId] ?? {}),
+                                            [key]: nextVal,
+                                          },
+                                        };
+                                      });
+                                    }}
+                                    className="h-4 w-4 accent-primary"
+                                  />
+                                ) : (
+                                  <input
+                                    type={valueType === "number" ? "number" : "text"}
+                                    value={value ?? ""}
+                                    onChange={(e) => {
+                                      const raw = e.target.value;
+                                      const nextVal = valueType === "number" ? (raw === "" ? "" : Number(raw)) : raw;
+                                      setWorkflowConfigDraft((prev) => {
+                                        const base = prev ?? (JSON.parse(JSON.stringify(workflowConfig)) as WorkflowConfig);
+                                        return {
+                                          ...base,
+                                          [agentId]: {
+                                            ...(base[agentId] ?? {}),
+                                            [key]: nextVal,
+                                          },
+                                        };
+                                      });
+                                    }}
+                                    className="w-full rounded-md border border-[#3b3f54] bg-[#0f1116] px-3 py-2 text-xs text-white placeholder:text-[#5c6076] focus:outline-none focus:ring-1 focus:ring-primary"
+                                  />
+                                )}
+                              </label>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={closeWcfModal}
+                className="h-9 rounded-lg border border-[#282b39] bg-transparent px-4 text-xs font-semibold text-[#9da1b9] hover:bg-[#282b39]/60 hover:text-white transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={saveWcfModal}
+                disabled={saving}
+                className="h-9 rounded-lg bg-primary px-4 text-xs font-bold text-white hover:bg-blue-600 transition-colors"
+              >
+                Save
+              </button>
             </div>
           </div>
         </div>

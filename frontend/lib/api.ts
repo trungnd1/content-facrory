@@ -44,6 +44,7 @@ export type Workflow = {
   name: string;
   description?: string | null;
   status?: string | null;
+  wcs?: any | null;
   created_at?: string;
   updated_at?: string;
 };
@@ -212,6 +213,22 @@ export function listWorkflowsByProject(projectId: string) {
 
 export function getWorkflow(id: string) {
   return request<Workflow>(`/workflows/${id}`);
+}
+
+// Workflow Configuration Schema (WCS)
+export type WorkflowWcsResponse = {
+  wcs: any;
+};
+
+export function getWorkflowWcs(workflowId: string) {
+  return request<WorkflowWcsResponse>(`/workflows/${workflowId}/wcs`);
+}
+
+export function updateWorkflowWcs(workflowId: string, wcs: any) {
+  return request<WorkflowWcsResponse>(`/workflows/${workflowId}/wcs`, {
+    method: "PUT",
+    body: JSON.stringify({ wcs }),
+  });
 }
 
 export function createWorkflowForProject(projectId: string, payload: { name: string; description?: string }) {

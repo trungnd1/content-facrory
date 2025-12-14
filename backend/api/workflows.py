@@ -31,6 +31,7 @@ class WorkflowOut(BaseModel):
     name: str
     description: Optional[str]
     is_active: bool
+    wcs: Optional[Dict[str, Any]] = None
     created_at: datetime
     updated_at: datetime
 
@@ -79,6 +80,14 @@ class WorkflowStepOut(BaseModel):
         from_attributes = True
 
 
+class WorkflowWcsPayload(BaseModel):
+    wcs: Dict[str, Any]
+
+
+class WorkflowWcsOut(BaseModel):
+    wcs: Dict[str, Any]
+
+
 @router.get("/", response_model=List[WorkflowOut])
 async def list_workflows(session: AsyncSession = Depends(get_session)):
     stmt = select(WorkflowModel).order_by(WorkflowModel.created_at.desc())
@@ -93,6 +102,33 @@ async def get_workflow(workflow_id: str, session: AsyncSession = Depends(get_ses
     if not workflow:
         raise HTTPException(status_code=404, detail="Workflow not found")
     return workflow
+
+
+@router.get("/{workflow_id}/wcs", response_model=WorkflowWcsOut)
+async def get_workflow_wcs(workflow_id: str, session: AsyncSession = Depends(get_session)):
+    workflow = await session.get(WorkflowModel, workflow_id)
+    if not workflow:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+
+    wcs = workflow.wcs if isinstance(getattr(workflow, "wcs", None), dict) else {}
+    return {"wcs": wcs}
+
+
+@router.put("/{workflow_id}/wcs", response_model=WorkflowWcsOut)
+async def update_workflow_wcs(
+    workflow_id: str,
+    payload: WorkflowWcsPayload,
+    session: AsyncSession = Depends(get_session),
+):
+    workflow = await session.get(WorkflowModel, workflow_id)
+    if not workflow:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+
+    workflow.wcs = payload.wcs
+    await session.commit()
+    await session.refresh(workflow)
+    wcs = workflow.wcs if isinstance(getattr(workflow, "wcs", None), dict) else {}
+    return {"wcs": wcs}
 
 
 @router.get("/by-project/{project_id}", response_model=List[WorkflowOut])

@@ -4,6 +4,7 @@ from typing import AsyncGenerator
 import asyncpg
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.engine.url import make_url
+from sqlalchemy import text
 
 
 RAW_DATABASE_URL = os.getenv("DATABASE_URL")
@@ -72,3 +73,30 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
 
     async with AsyncSessionLocal() as session:  # type: ignore[misc]
         yield session
+
+
+async def ensure_workflow_wcs_column() -> None:
+    """Best-effort schema tweak: ensure `workflows.wcs` exists.
+
+    This project doesn't ship Alembic migrations; in dev environments we
+    apply a minimal additive change at startup.
+    """
+
+    if engine is None:
+        return
+
+    dialect = getattr(engine.dialect, "name", "")
+
+    # Prefer JSONB on Postgres; otherwise fallback to JSON.
+    if dialect == "postgresql":
+        ddl = "ALTER TABLE workflows ADD COLUMN IF NOT EXISTS wcs JSONB"
+    else:
+        # Generic fallback (may or may not be supported depending on DB)
+        ddl = "ALTER TABLE workflows ADD COLUMN wcs JSON"
+
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(text(ddl))
+    except Exception:
+        # Best-effort only; ignore if table/column already exists or DB doesn't support DDL.
+        return

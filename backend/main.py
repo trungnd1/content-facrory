@@ -10,6 +10,9 @@ base_dir = Path(__file__).resolve().parent
 load_dotenv(override=False)
 load_dotenv(base_dir / ".env.local", override=True)
 
+# Import db AFTER dotenv is loaded because db.py reads DATABASE_URL at import time.
+from db import ensure_workflow_wcs_column  # noqa: E402
+
 from api import health, agents, workflows, executions, projects, llm_config  # noqa: E402
 
 
@@ -29,6 +32,11 @@ app.include_router(projects.router, prefix="/projects", tags=["projects"])
 app.include_router(workflows.router, prefix="/workflows", tags=["workflows"])
 app.include_router(executions.router, prefix="/executions", tags=["executions"])
 app.include_router(llm_config.router, prefix="/llm", tags=["llm"])
+
+
+@app.on_event("startup")
+async def _startup_schema() -> None:
+    await ensure_workflow_wcs_column()
 
 @app.get("/")
 def root():

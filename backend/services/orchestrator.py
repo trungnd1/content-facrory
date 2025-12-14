@@ -117,6 +117,30 @@ class Orchestrator:
 
         current_data: Dict[str, Any] = execution.input or {}
 
+        # Workflow Configuration Schema (WCS): persisted on Workflow, but can be overridden per-run
+        # via a reserved key in execution.input.
+        workflow_wcs: Dict[str, Any] = {}
+
+        if isinstance(current_data, dict):
+            # Prefer the new key, but keep legacy compatibility.
+            raw = None
+            if "__workflow_wcs" in current_data:
+                raw = current_data.pop("__workflow_wcs", None)
+            elif "__workflow_config" in current_data:
+                raw = current_data.pop("__workflow_config", None)
+
+            if isinstance(raw, dict):
+                workflow_wcs = raw
+
+        # If the run did not provide WCS, fall back to the persisted workflow.wcs.
+        if not workflow_wcs:
+            try:
+                wf = await self.session.get(Workflow, execution.workflow_id)
+                if wf is not None and isinstance(getattr(wf, "wcs", None), dict):
+                    workflow_wcs = wf.wcs  # type: ignore[assignment]
+            except Exception:
+                pass
+
         for step in steps:
             step_key = str(step.id)
             if step_key in existing_steps:
@@ -223,6 +247,12 @@ class Orchestrator:
                         if key in normalized_keys
                     }
 
+                # Inject per-agent config from workflow WCS if present.
+                agent_config = workflow_wcs.get(str(agent.id)) if isinstance(workflow_wcs, dict) else None
+                if isinstance(agent_config, dict):
+                    agent_input = dict(agent_input)
+                    agent_input["config"] = agent_config
+
                 exec_step = WorkflowExecutionStep(
                     execution_id=execution.id,
                     step_id=step.id,
@@ -247,7 +277,11 @@ class Orchestrator:
                 user_content = agent.prompt_template or ""
                 # naive variable interpolation using {{key}}
                 for key, value in (template_data or {}).items():
-                    user_content = user_content.replace(f"{{{{{key}}}}}", str(value))
+                    if isinstance(value, (dict, list)):
+                        replacement = json.dumps(value, ensure_ascii=False)
+                    else:
+                        replacement = str(value)
+                    user_content = user_content.replace(f"{{{{{key}}}}}", replacement)
 
                 messages.append({"role": "user", "content": user_content})
 
