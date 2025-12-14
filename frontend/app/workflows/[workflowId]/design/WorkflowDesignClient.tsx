@@ -24,7 +24,7 @@ import {
 
 type WorkflowConfig = Record<string, Record<string, any>>;
 
-function tryParseLooseJsonObject(text: string): Record<string, any> | null {
+function tryParseLooseJsonValue(text: string): any | null {
   if (!text) return null;
 
   // Strip markdown fences if present
@@ -36,17 +36,36 @@ function tryParseLooseJsonObject(text: string): Record<string, any> | null {
     .replace(/^\s*\/\/.*$/gm, "");
 
   // Remove trailing commas before } or ] (JSON5-like prompts)
-  const normalized = withoutComments.replace(/,\s*([}\]])/g, "$1");
+  const withoutTrailingCommas = withoutComments.replace(/,\s*([}\]])/g, "$1");
+
+  // Quote unquoted keys: { foo: 1 } or , foo: 1  -> { "foo": 1 }
+  // This keeps existing quoted keys untouched and helps parse "JSON-ish" configs.
+  const normalized = withoutTrailingCommas.replace(/([\{\[,]\s*)([A-Za-z_][A-Za-z0-9_]*)(\s*:)/g, "$1\"$2\"$3");
 
   try {
-    const parsed = JSON.parse(normalized);
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      return parsed as Record<string, any>;
-    }
+    return JSON.parse(normalized);
   } catch {
-    // ignore
+    return null;
+  }
+}
+
+function tryParseLooseJsonObject(text: string): Record<string, any> | null {
+  const parsed = tryParseLooseJsonValue(text);
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+    return parsed as Record<string, any>;
   }
   return null;
+}
+
+function coercePreviewTitleMap(value: any): any | undefined {
+  if (Array.isArray(value)) return value;
+  if (value && typeof value === "object") return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = tryParseLooseJsonValue(value.trim());
+    if (Array.isArray(parsed)) return parsed;
+    if (parsed && typeof parsed === "object") return parsed;
+  }
+  return undefined;
 }
 
 function extractConfigFromPromptSystem(promptSystem?: string | null): Record<string, any> | null {
@@ -160,7 +179,7 @@ interface WorkflowDesignClientProps {
   workflow: Workflow | null;
 }
 
-type StepStatus = "pending" | "running" | "done" | "error";
+type StepStatus = "pending" | "waiting" | "running" | "done" | "error";
 
 interface UIStep extends WorkflowStep {
   status: StepStatus;
@@ -202,9 +221,30 @@ export function WorkflowDesignClient({ workflow }: WorkflowDesignClientProps) {
     [steps, activeStepId],
   );
 
+  const activeStepPreviewTitleMap = useMemo(() => {
+    // Preview ordering + display titles can be provided per agent via config.preview_title_map.
+    // Priority:
+    // 1) executionStep.input.config.preview_title_map (after running)
+    // 2) workflow WCS config for this agent (design-time fallback)
+    const fromExec = (activeStep as any)?.executionStep?.input?.config?.preview_title_map;
+    const execCoerced = coercePreviewTitleMap(fromExec);
+    if (execCoerced) return execCoerced;
+
+    const agentId = activeStep?.agent_id ?? undefined;
+    if (!agentId) return undefined;
+
+    const fromWcs = (workflowConfig as any)?.[agentId]?.preview_title_map;
+    const wcsCoerced = coercePreviewTitleMap(fromWcs);
+    if (wcsCoerced) return wcsCoerced;
+
+    return undefined;
+  }, [activeStep?.id, activeStep?.agent_id, (activeStep as any)?.executionStep?.input, workflowConfig]);
+
   const previewMarkdown = useMemo(() => {
-    return formatAgentOutputToMarkdown(activeStep?.output);
-  }, [activeStep?.output, activeStep?.id]);
+    return formatAgentOutputToMarkdown(activeStep?.output, {
+      previewTitleMap: activeStepPreviewTitleMap,
+    });
+  }, [activeStep?.output, activeStep?.id, activeStepPreviewTitleMap]);
 
   const completedCount = steps.filter((s) => s.status === "done").length;
   const progressPercent = steps.length > 0 ? Math.round((completedCount / steps.length) * 100) : 0;
@@ -297,6 +337,10 @@ export function WorkflowDesignClient({ workflow }: WorkflowDesignClientProps) {
 
   const mapExecutionStatus = (status: string): StepStatus => {
     switch (status) {
+      case "waiting":
+      case "queued":
+      case "pending":
+        return "waiting";
       case "running":
         return "running";
       case "success":
@@ -307,7 +351,7 @@ export function WorkflowDesignClient({ workflow }: WorkflowDesignClientProps) {
       case "rejected":
         return "error";
       default:
-        return "pending";
+        return "waiting";
     }
   };
 
@@ -361,6 +405,31 @@ export function WorkflowDesignClient({ workflow }: WorkflowDesignClientProps) {
     if (!workflow) return;
     // Switch to execute mode when starting a run
     setMode("execute");
+
+    // Reset UI step states for a fresh run:
+    // - Agent steps go to `waiting`
+    // - Clear any previous outputs/executionStep pointers
+    setSteps((prev) =>
+      prev
+        .map((s) => {
+          if (s.type === "AGENT") {
+            return {
+              ...s,
+              status: "waiting" as StepStatus,
+              output: undefined,
+              executionStep: undefined,
+            };
+          }
+          return {
+            ...s,
+            status: "pending" as StepStatus,
+            output: undefined,
+            executionStep: undefined,
+          };
+        })
+        .sort((a, b) => a.step_number - b.step_number),
+    );
+
     setRunning(true);
     setSaving(true);
     try {
@@ -707,6 +776,7 @@ export function WorkflowDesignClient({ workflow }: WorkflowDesignClientProps) {
                 {steps.map((step, index) => {
                   const isActive = activeStepId === step.id;
                   const isDone = step.status === "done";
+                  const isWaiting = step.status === "waiting";
                   const isRunning = step.status === "running";
                   const isError = step.status === "error";
 
@@ -798,6 +868,8 @@ export function WorkflowDesignClient({ workflow }: WorkflowDesignClientProps) {
                                 ? "text-green-400 bg-green-400/10"
                                 : isRunning
                                 ? "text-primary bg-primary/10"
+                                : isWaiting
+                                ? "text-[#9da1b9] bg-[#282b39]"
                                 : isError
                                 ? "text-red-400 bg-red-400/10"
                                 : "text-[#9da1b9] bg-[#282b39]"
@@ -807,6 +879,8 @@ export function WorkflowDesignClient({ workflow }: WorkflowDesignClientProps) {
                               ? "Done"
                               : isRunning
                               ? "Running"
+                              : isWaiting
+                              ? "Waiting"
                               : isError
                               ? "Error"
                               : "Pending"}
@@ -934,6 +1008,13 @@ export function WorkflowDesignClient({ workflow }: WorkflowDesignClientProps) {
                                 }
                               }
 
+                              // Always show a `config` input for agent steps.
+                              // Even before execution, WCS provides per-agent config, so keep it visible.
+                              availableKeys = [
+                                "config",
+                                ...availableKeys.filter((k) => k !== "config"),
+                              ];
+
                               if (availableKeys.length === 0) {
                                 return (
                                   <>
@@ -951,14 +1032,19 @@ export function WorkflowDesignClient({ workflow }: WorkflowDesignClientProps) {
                               return (
                                 <div className="flex flex-wrap gap-1">
                                   {availableKeys.map((key) => {
-                                  const selected = Array.isArray((step.config as any)?.selected_inputs)
-                                    ? ((step.config as any).selected_inputs as string[]).includes(key)
-                                    : false;
+                                  const isConfigKey = key === "config";
+                                  const selected = isConfigKey
+                                    ? true
+                                    : Array.isArray((step.config as any)?.selected_inputs)
+                                      ? ((step.config as any).selected_inputs as string[]).includes(key)
+                                      : false;
                                   return (
                                     <button
                                       key={key}
                                       type="button"
+                                      disabled={isConfigKey}
                                       onClick={async (event) => {
+                                        if (isConfigKey) return;
                                         event.stopPropagation();
                                         const prevSelected = Array.isArray((step.config as any)?.selected_inputs)
                                           ? ((step.config as any).selected_inputs as string[])
@@ -1300,15 +1386,18 @@ export function WorkflowDesignClient({ workflow }: WorkflowDesignClientProps) {
                   const agentName =
                     agents.find((a) => a.id === agentId)?.name ?? `Agent ${agentId}`;
                   const cfg = (workflowConfigDraft ?? workflowConfig)[agentId] ?? {};
-                  const keys = Object.keys(cfg);
+                  const rawKeys = Object.keys(cfg);
+                  const keys = rawKeys.filter((k) => k !== "preview_title_map");
 
                   return (
                     <div key={agentId} className="rounded-lg border border-[#282b39] bg-[#151722] p-3">
                       <p className="text-xs font-semibold text-white mb-2">{agentName}</p>
-                      {keys.length === 0 ? (
+                      {rawKeys.length === 0 ? (
                         <p className="text-xs text-[#9da1b9]">
                           Không tìm thấy <span className="text-white">config</span> trong INPUT schema của agent này.
                         </p>
+                      ) : keys.length === 0 ? (
+                        <p className="text-xs text-[#9da1b9]">Không có trường cấu hình nào để chỉnh trong WCS.</p>
                       ) : (
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                           {keys.map((key) => {
