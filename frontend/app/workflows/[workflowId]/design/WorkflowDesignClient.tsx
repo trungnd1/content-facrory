@@ -17,12 +17,14 @@ import {
   listExecutionSteps,
   listWorkflowSteps,
   runWorkflow,
+  updateWorkflowOutputConfig,
   updateWorkflowWcs,
   updateWorkflow,
   updateWorkflowStep,
 } from "@/lib/api";
 
 type WorkflowConfig = Record<string, Record<string, any>>;
+type WorkflowOutputConfig = string[];
 
 function tryParseLooseJsonValue(text: string): any | null {
   if (!text) return null;
@@ -65,6 +67,60 @@ function coercePreviewTitleMap(value: any): any | undefined {
     if (Array.isArray(parsed)) return parsed;
     if (parsed && typeof parsed === "object") return parsed;
   }
+  return undefined;
+}
+
+function resolvePreviewTitleMapFromStepInput(stepInput: any): any | undefined {
+  if (!stepInput) return undefined;
+
+  // Common: input.config.preview_title_map
+  const direct = stepInput?.config?.preview_title_map;
+  const coercedDirect = coercePreviewTitleMap(direct);
+  if (coercedDirect) return coercedDirect;
+
+  // Some runs may store preview_title_map at top-level.
+  const topLevel = stepInput?.preview_title_map;
+  const coercedTop = coercePreviewTitleMap(topLevel);
+  if (coercedTop) return coercedTop;
+
+  // If input.config was serialized as a string, parse and retry.
+  if (typeof stepInput?.config === "string" && stepInput.config.trim()) {
+    const parsedConfig = tryParseLooseJsonValue(stepInput.config.trim());
+    const coercedParsed = coercePreviewTitleMap((parsedConfig as any)?.preview_title_map);
+    if (coercedParsed) return coercedParsed;
+
+    // Rare nested wrapper: { config: { preview_title_map } }
+    const coercedNested = coercePreviewTitleMap((parsedConfig as any)?.config?.preview_title_map);
+    if (coercedNested) return coercedNested;
+  }
+
+  // Rare nested wrapper: input.config.config.preview_title_map
+  const nested = stepInput?.config?.config?.preview_title_map;
+  const coercedNested = coercePreviewTitleMap(nested);
+  if (coercedNested) return coercedNested;
+
+  return undefined;
+}
+
+function resolvePreviewTitleMapFromWcs(agentConfig: any): any | undefined {
+  if (!agentConfig) return undefined;
+
+  const direct = agentConfig?.preview_title_map;
+  const coercedDirect = coercePreviewTitleMap(direct);
+  if (coercedDirect) return coercedDirect;
+
+  // Rare wrapper: { config: { preview_title_map } }
+  const nested = agentConfig?.config?.preview_title_map;
+  const coercedNested = coercePreviewTitleMap(nested);
+  if (coercedNested) return coercedNested;
+
+  // If persisted as a JSON-ish string.
+  if (typeof direct === "string" && direct.trim()) {
+    const parsed = tryParseLooseJsonValue(direct.trim());
+    const coercedParsed = coercePreviewTitleMap(parsed);
+    if (coercedParsed) return coercedParsed;
+  }
+
   return undefined;
 }
 
@@ -213,6 +269,10 @@ export function WorkflowDesignClient({ workflow }: WorkflowDesignClientProps) {
   const [showWcfModal, setShowWcfModal] = useState(false);
   const [workflowConfigDraft, setWorkflowConfigDraft] = useState<WorkflowConfig | null>(null);
 
+  const [workflowOutputConfig, setWorkflowOutputConfig] = useState<WorkflowOutputConfig>([]);
+  const [workflowOutputConfigDraft, setWorkflowOutputConfigDraft] = useState<WorkflowOutputConfig | null>(null);
+  const [draggingOutputKey, setDraggingOutputKey] = useState<string | null>(null);
+
   // Drag state for step reordering
   const [draggingStepId, setDraggingStepId] = useState<string | null>(null);
 
@@ -226,15 +286,14 @@ export function WorkflowDesignClient({ workflow }: WorkflowDesignClientProps) {
     // Priority:
     // 1) executionStep.input.config.preview_title_map (after running)
     // 2) workflow WCS config for this agent (design-time fallback)
-    const fromExec = (activeStep as any)?.executionStep?.input?.config?.preview_title_map;
-    const execCoerced = coercePreviewTitleMap(fromExec);
+    const stepInput = (activeStep as any)?.executionStep?.input;
+    const execCoerced = resolvePreviewTitleMapFromStepInput(stepInput);
     if (execCoerced) return execCoerced;
 
     const agentId = activeStep?.agent_id ?? undefined;
     if (!agentId) return undefined;
 
-    const fromWcs = (workflowConfig as any)?.[agentId]?.preview_title_map;
-    const wcsCoerced = coercePreviewTitleMap(fromWcs);
+    const wcsCoerced = resolvePreviewTitleMapFromWcs((workflowConfig as any)?.[agentId]);
     if (wcsCoerced) return wcsCoerced;
 
     return undefined;
@@ -269,6 +328,11 @@ export function WorkflowDesignClient({ workflow }: WorkflowDesignClientProps) {
         const persistedWcs = (workflow as any)?.wcs;
         if (!cancelled && persistedWcs && typeof persistedWcs === "object" && !Array.isArray(persistedWcs)) {
           setWorkflowConfig(persistedWcs as WorkflowConfig);
+        }
+
+        const persistedOutputConfig = (workflow as any)?.output_config;
+        if (!cancelled && Array.isArray(persistedOutputConfig)) {
+          setWorkflowOutputConfig(persistedOutputConfig.filter((x: any) => typeof x === "string"));
         }
 
         const [stepsRes, agentsRes] = await Promise.all([
@@ -480,23 +544,30 @@ export function WorkflowDesignClient({ workflow }: WorkflowDesignClientProps) {
     // Flat key/value configs, safe to clone via JSON.
     const draft = JSON.parse(JSON.stringify(workflowConfig || {})) as WorkflowConfig;
     setWorkflowConfigDraft(draft);
+    const outDraft = (workflowOutputConfig || []).slice();
+    setWorkflowOutputConfigDraft(outDraft);
     setShowWcfModal(true);
   };
 
   const closeWcfModal = () => {
     setShowWcfModal(false);
     setWorkflowConfigDraft(null);
+    setWorkflowOutputConfigDraft(null);
+    setDraggingOutputKey(null);
   };
 
   const saveWcfModal = async () => {
     if (!workflow) return;
 
     const nextWcs = (workflowConfigDraft ?? workflowConfig) as WorkflowConfig;
+    const nextOutputConfig = (workflowOutputConfigDraft ?? workflowOutputConfig) as WorkflowOutputConfig;
 
     setSaving(true);
     try {
       await updateWorkflowWcs(workflow.id, nextWcs);
+      await updateWorkflowOutputConfig(workflow.id, nextOutputConfig);
       setWorkflowConfig(nextWcs);
+      setWorkflowOutputConfig(nextOutputConfig);
       closeWcfModal();
     } catch (e) {
       console.error(e);
@@ -1180,7 +1251,9 @@ export function WorkflowDesignClient({ workflow }: WorkflowDesignClientProps) {
               <div className="flex items-center justify-between border-b border-[#282b39] bg-surface-darker px-4 py-3">
                 <div className="flex items-center gap-3">
                   <span className="material-symbols-outlined text-primary text-[24px]">terminal</span>
-                  <span className="font-mono text-sm font-medium text-white">Agent Output Stream</span>
+                  <span className="font-mono text-sm font-medium text-white">
+                    {workflowName ? `Workflow Output Stream - ${workflowName}` : "Workflow Output Stream"}
+                  </span>
                 </div>
                 <div className="flex bg-[#282b39] rounded-lg p-1">
                   <button
@@ -1372,6 +1445,159 @@ export function WorkflowDesignClient({ workflow }: WorkflowDesignClientProps) {
             </p>
 
             <div className="max-h-[60vh] overflow-y-auto space-y-4 pr-1">
+              {/* Workflow Output Config */}
+              <div className="rounded-lg border border-[#282b39] bg-[#151722] p-3">
+                <p className="text-xs font-semibold text-white mb-2">Workflow Output Config</p>
+                <p className="text-[11px] text-[#9da1b9] mb-3">
+                  Chọn và sắp xếp các OUTPUT keys (unique) để dùng cho Workflow Output Preview.
+                </p>
+
+                {(() => {
+                  const orderedAgentIds = steps
+                    .filter((s) => s.type === "AGENT" && s.agent_id)
+                    .map((s) => s.agent_id as string);
+
+                  const selected = (workflowOutputConfigDraft ?? workflowOutputConfig) as string[];
+                  const selectedSet = new Set(selected);
+
+                  const sections = orderedAgentIds
+                    .map((agentId, idx) => {
+                      const agentName = agents.find((a) => a.id === agentId)?.name ?? `Agent ${agentId}`;
+                      const agentDef = agents.find((a) => a.id === agentId);
+                      const keys = getAgentOutputKeys(agentDef);
+                      return {
+                        sectionId: `${agentId}-${idx}`,
+                        agentId,
+                        agentName,
+                        keys,
+                      };
+                    })
+                    .filter((s) => s.keys.length > 0);
+
+                  const addKey = (key: string) => {
+                    if (!key) return;
+                    if (selectedSet.has(key)) {
+                      alert(`Output key "${key}" đã được chọn. Không cho phép trùng lặp.`);
+                      return;
+                    }
+                    setWorkflowOutputConfigDraft((prev) => {
+                      const base = (prev ?? workflowOutputConfig).slice();
+                      return [...base, key];
+                    });
+                  };
+
+                  const removeKey = (key: string) => {
+                    setWorkflowOutputConfigDraft((prev) => {
+                      const base = (prev ?? workflowOutputConfig).slice();
+                      return base.filter((k) => k !== key);
+                    });
+                  };
+
+                  const moveKey = (key: string, beforeKey: string) => {
+                    if (key === beforeKey) return;
+                    setWorkflowOutputConfigDraft((prev) => {
+                      const base = (prev ?? workflowOutputConfig).slice();
+                      const from = base.indexOf(key);
+                      const to = base.indexOf(beforeKey);
+                      if (from === -1 || to === -1) return base;
+                      base.splice(from, 1);
+                      const insertAt = from < to ? Math.max(0, to - 1) : to;
+                      base.splice(insertAt, 0, key);
+                      return base;
+                    });
+                  };
+
+                  if (sections.length === 0) {
+                    return <p className="text-[11px] text-[#5c6076]">Workflow chưa có agent hoặc agent chưa có output_schema.</p>;
+                  }
+
+                  return (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {/* Left: available outputs */}
+                      <div className="rounded-lg border border-[#282b39] bg-[#0f1116] p-3">
+                        <p className="text-[11px] font-semibold text-[#9da1b9] mb-2">Available OUTPUT keys</p>
+                        <div className="space-y-3">
+                          {sections.map((sec) => (
+                            <div key={sec.sectionId}>
+                              <p className="text-[11px] text-white/80 mb-1 truncate" title={sec.agentName}>
+                                {sec.agentName}
+                              </p>
+                              <div className="flex flex-wrap gap-1">
+                                {sec.keys.map((key) => {
+                                  const isSelected = selectedSet.has(key);
+                                  return (
+                                    <button
+                                      key={`${sec.sectionId}-${key}`}
+                                      type="button"
+                                      onClick={() => (isSelected ? removeKey(key) : addKey(key))}
+                                      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] transition-colors ${
+                                        isSelected
+                                          ? "border-primary bg-primary/10 text-primary"
+                                          : "border-[#3b3f54] bg-[#0f1116] text-[#d4d6e6] hover:border-primary/60 hover:text-primary"
+                                      }`}
+                                    >
+                                      {key}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Right: selected + ordering */}
+                      <div className="rounded-lg border border-[#282b39] bg-[#0f1116] p-3">
+                        <p className="text-[11px] font-semibold text-[#9da1b9] mb-2">Selected (drag to reorder)</p>
+                        {selected.length === 0 ? (
+                          <p className="text-[11px] text-[#5c6076]">Chưa chọn output nào.</p>
+                        ) : (
+                          <div className="flex flex-col gap-2">
+                            {selected.map((key) => (
+                              <div
+                                key={key}
+                                className={`flex items-center justify-between rounded-lg border border-[#282b39] bg-[#151722] px-3 py-2 ${
+                                  draggingOutputKey === key ? "opacity-70" : ""
+                                }`}
+                                draggable
+                                onDragStart={(e) => {
+                                  setDraggingOutputKey(key);
+                                  e.dataTransfer.effectAllowed = "move";
+                                }}
+                                onDragEnd={() => setDraggingOutputKey(null)}
+                                onDragOver={(e) => {
+                                  if (!draggingOutputKey || draggingOutputKey === key) return;
+                                  e.preventDefault();
+                                }}
+                                onDrop={(e) => {
+                                  e.preventDefault();
+                                  if (!draggingOutputKey || draggingOutputKey === key) return;
+                                  moveKey(draggingOutputKey, key);
+                                  setDraggingOutputKey(null);
+                                }}
+                              >
+                                <span className="text-xs text-white truncate">{key}</span>
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    className="text-[#9da1b9] hover:text-white"
+                                    title="Remove"
+                                    onClick={() => removeKey(key)}
+                                  >
+                                    <span className="material-symbols-outlined text-[18px]">close</span>
+                                  </button>
+                                  <span className="text-[#565b73] text-lg cursor-grab select-none">::</span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+
               {(() => {
                 const orderedAgentIds = steps
                   .filter((s) => s.type === "AGENT" && s.agent_id)

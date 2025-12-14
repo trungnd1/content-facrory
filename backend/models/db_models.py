@@ -70,6 +70,9 @@ class Workflow(Base):
     # Workflow Configuration Schema (WCS): per-agent config values persisted for the workflow.
     # Shape: { [agent_id: string]: { [key: string]: any } }
     wcs = Column(JSON, nullable=True)
+    # Workflow Output Configuration: ordered list of unique output keys to display in workflow preview.
+    # Shape: ["topic_id", "selected_topic", ...]
+    output_config = Column(JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False

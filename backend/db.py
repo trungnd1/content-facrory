@@ -100,3 +100,28 @@ async def ensure_workflow_wcs_column() -> None:
     except Exception:
         # Best-effort only; ignore if table/column already exists or DB doesn't support DDL.
         return
+
+
+async def ensure_workflow_output_config_column() -> None:
+    """Best-effort schema tweak: ensure `workflows.output_config` exists.
+
+    This project doesn't ship Alembic migrations; in dev environments we
+    apply a minimal additive change at startup.
+    """
+
+    if engine is None:
+        return
+
+    dialect = getattr(engine.dialect, "name", "")
+
+    # Prefer JSONB on Postgres; otherwise fallback to JSON.
+    if dialect == "postgresql":
+        ddl = "ALTER TABLE workflows ADD COLUMN IF NOT EXISTS output_config JSONB"
+    else:
+        ddl = "ALTER TABLE workflows ADD COLUMN output_config JSON"
+
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(text(ddl))
+    except Exception:
+        return

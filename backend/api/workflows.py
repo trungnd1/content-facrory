@@ -12,6 +12,7 @@ from models.db_models import (
     Agent as AgentModel,
     Project as ProjectModel,
     Workflow as WorkflowModel,
+    WorkflowExecution as WorkflowExecutionModel,
     WorkflowStep as WorkflowStepModel,
 )
 
@@ -32,6 +33,7 @@ class WorkflowOut(BaseModel):
     description: Optional[str]
     is_active: bool
     wcs: Optional[Dict[str, Any]] = None
+    output_config: Optional[List[str]] = None
     created_at: datetime
     updated_at: datetime
 
@@ -88,6 +90,60 @@ class WorkflowWcsOut(BaseModel):
     wcs: Dict[str, Any]
 
 
+class WorkflowOutputConfigPayload(BaseModel):
+    output_config: List[str]
+
+
+class WorkflowOutputConfigOut(BaseModel):
+    output_config: List[str]
+
+
+class WorkflowLatestExecutionOut(BaseModel):
+    id: UUID
+    workflow_id: Optional[UUID]
+    project_id: Optional[UUID]
+    user_id: Optional[str]
+    status: str
+    input: Dict[str, Any]
+    result: Optional[Dict[str, Any]]
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class WorkflowWithLatestExecutionOut(BaseModel):
+    workflow: WorkflowOut
+    latest_execution: Optional[WorkflowLatestExecutionOut] = None
+
+
+@router.get("/with-latest-execution", response_model=List[WorkflowWithLatestExecutionOut])
+async def list_workflows_with_latest_execution(
+    session: AsyncSession = Depends(get_session),
+):
+    # NOTE: This route must appear before the dynamic "/{workflow_id}" route.
+    # Otherwise requests to "/workflows/with-latest-execution" can be incorrectly
+    # matched as workflow_id="with-latest-execution" and cause UUID encoding errors.
+    stmt = select(WorkflowModel).order_by(WorkflowModel.created_at.desc())
+    result = await session.execute(stmt)
+    workflows = result.scalars().all()
+
+    items: List[WorkflowWithLatestExecutionOut] = []
+    for wf in workflows:
+        exec_stmt = (
+            select(WorkflowExecutionModel)
+            .where(WorkflowExecutionModel.workflow_id == wf.id)
+            .order_by(WorkflowExecutionModel.created_at.desc())
+            .limit(1)
+        )
+        exec_res = await session.execute(exec_stmt)
+        latest = exec_res.scalars().first()
+        items.append({"workflow": wf, "latest_execution": latest})
+
+    return items
+
+
 @router.get("/", response_model=List[WorkflowOut])
 async def list_workflows(session: AsyncSession = Depends(get_session)):
     stmt = select(WorkflowModel).order_by(WorkflowModel.created_at.desc())
@@ -112,6 +168,70 @@ async def get_workflow_wcs(workflow_id: str, session: AsyncSession = Depends(get
 
     wcs = workflow.wcs if isinstance(getattr(workflow, "wcs", None), dict) else {}
     return {"wcs": wcs}
+
+
+@router.get("/{workflow_id}/output-config", response_model=WorkflowOutputConfigOut)
+async def get_workflow_output_config(
+    workflow_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    workflow = await session.get(WorkflowModel, workflow_id)
+    if not workflow:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+
+    oc = getattr(workflow, "output_config", None)
+    output_config = oc if isinstance(oc, list) else []
+    # Ensure it's a list of strings
+    output_config = [str(x) for x in output_config if isinstance(x, (str, int, float))]
+    return {"output_config": output_config}
+
+
+@router.put("/{workflow_id}/output-config", response_model=WorkflowOutputConfigOut)
+async def update_workflow_output_config(
+    workflow_id: str,
+    payload: WorkflowOutputConfigPayload,
+    session: AsyncSession = Depends(get_session),
+):
+    workflow = await session.get(WorkflowModel, workflow_id)
+    if not workflow:
+        raise HTTPException(status_code=404, detail="Workflow not found")
+
+    # Normalize to unique strings in input order
+    seen: set[str] = set()
+    normalized: List[str] = []
+    for item in payload.output_config or []:
+        if not isinstance(item, str):
+            continue
+        key = item.strip()
+        if not key:
+            continue
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append(key)
+
+    workflow.output_config = normalized
+    await session.commit()
+    await session.refresh(workflow)
+    oc = getattr(workflow, "output_config", None)
+    return {"output_config": oc if isinstance(oc, list) else []}
+
+
+@router.get("/{workflow_id}/executions/latest", response_model=Optional[WorkflowLatestExecutionOut])
+async def get_latest_execution_for_workflow(
+    workflow_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    # Return the latest execution (by created_at) for this workflow.
+    stmt = (
+        select(WorkflowExecutionModel)
+        .where(WorkflowExecutionModel.workflow_id == workflow_id)
+        .order_by(WorkflowExecutionModel.created_at.desc())
+        .limit(1)
+    )
+    result = await session.execute(stmt)
+    latest = result.scalars().first()
+    return latest
 
 
 @router.put("/{workflow_id}/wcs", response_model=WorkflowWcsOut)

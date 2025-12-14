@@ -45,8 +45,14 @@ export type Workflow = {
   description?: string | null;
   status?: string | null;
   wcs?: any | null;
+  output_config?: string[] | null;
   created_at?: string;
   updated_at?: string;
+};
+
+export type WorkflowWithLatestExecution = {
+  workflow: Workflow;
+  latest_execution: WorkflowExecution | null;
 };
 
 export type WorkflowExecution = {
@@ -207,12 +213,36 @@ export function listWorkflows() {
   return request<Workflow[]>("/workflows");
 }
 
+export function listWorkflowsWithLatestExecution() {
+  return request<WorkflowWithLatestExecution[]>("/workflows/with-latest-execution");
+}
+
 export function listWorkflowsByProject(projectId: string) {
   return request<Workflow[]>(`/workflows/by-project/${projectId}`);
 }
 
 export function getWorkflow(id: string) {
   return request<Workflow>(`/workflows/${id}`);
+}
+
+// Workflow Output Configuration
+export type WorkflowOutputConfigResponse = {
+  output_config: string[];
+};
+
+export function getWorkflowOutputConfig(workflowId: string) {
+  return request<WorkflowOutputConfigResponse>(`/workflows/${workflowId}/output-config`);
+}
+
+export function updateWorkflowOutputConfig(workflowId: string, output_config: string[]) {
+  return request<WorkflowOutputConfigResponse>(`/workflows/${workflowId}/output-config`, {
+    method: "PUT",
+    body: JSON.stringify({ output_config }),
+  });
+}
+
+export function getWorkflowLatestExecution(workflowId: string) {
+  return request<WorkflowExecution | null>(`/workflows/${workflowId}/executions/latest`);
 }
 
 // Workflow Configuration Schema (WCS)

@@ -11,7 +11,7 @@ load_dotenv(override=False)
 load_dotenv(base_dir / ".env.local", override=True)
 
 # Import db AFTER dotenv is loaded because db.py reads DATABASE_URL at import time.
-from db import ensure_workflow_wcs_column  # noqa: E402
+from db import ensure_workflow_output_config_column, ensure_workflow_wcs_column  # noqa: E402
 
 from api import health, agents, workflows, executions, projects, llm_config  # noqa: E402
 
@@ -37,6 +37,7 @@ app.include_router(llm_config.router, prefix="/llm", tags=["llm"])
 @app.on_event("startup")
 async def _startup_schema() -> None:
     await ensure_workflow_wcs_column()
+    await ensure_workflow_output_config_column()
 
 @app.get("/")
 def root():
