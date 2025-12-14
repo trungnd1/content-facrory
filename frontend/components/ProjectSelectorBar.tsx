@@ -56,19 +56,25 @@ export function ProjectSelectorBar({ className = "" }: ProjectSelectorBarProps) 
         </span>
       </div>
       <div className="flex items-center gap-2 min-w-[180px]">
-        <select
-          className="w-full rounded-lg border border-border-dark bg-[#111218] px-3 py-1.5 text-xs text-white focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-          value={selectedId}
-          onChange={(e) => handleChange(e.target.value)}
-          disabled={loading}
-        >
-          <option value="">None</option>
-          {projects.map((project) => (
-            <option key={project.id} value={project.id}>
-              {project.name}
-            </option>
-          ))}
-        </select>
+        <div className="relative w-full">
+          <select
+            className="w-full appearance-none group flex h-8 items-center justify-center gap-x-2 rounded-lg bg-[#282b39] hover:bg-[#3b3f54] border border-transparent hover:border-border-dark pl-3 pr-8 text-white text-xs font-medium transition-all focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-60 disabled:hover:bg-[#282b39]"
+            value={selectedId}
+            onChange={(e) => handleChange(e.target.value)}
+            disabled={loading}
+            aria-label="Project selection"
+          >
+            <option value="">Dự án: None</option>
+            {projects.map((project) => (
+              <option key={project.id} value={project.id}>
+                {`Dự án: ${project.name}`}
+              </option>
+            ))}
+          </select>
+          <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 material-symbols-outlined text-text-secondary text-[16px]">
+            keyboard_arrow_down
+          </span>
+        </div>
       </div>
     </div>
   );
