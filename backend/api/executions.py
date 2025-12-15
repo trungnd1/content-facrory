@@ -14,7 +14,7 @@ from models.db_models import (
     WorkflowExecutionStep as WorkflowExecutionStepModel,
 )
 from services.llm_provider import get_llm_provider
-from services.orchestrator import Orchestrator, approve_step, reject_step
+from services.orchestrator import Orchestrator, approve_step, reject_step, prune_workflow_executions
 
 
 router = APIRouter()
@@ -218,4 +218,6 @@ async def cancel_execution(
     execution.status = "cancelled"
     await session.commit()
     await session.refresh(execution)
+
+    await prune_workflow_executions(session, str(execution.workflow_id) if execution.workflow_id else None, keep_last=3)
     return execution

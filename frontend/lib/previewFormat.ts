@@ -14,6 +14,13 @@ type PreviewOrdering = {
     orderByParent: Record<string, string[]>;
 };
 
+function normalizePreviewPath(path: string): string {
+    // Supports explicit array-item marker syntax in preview_title_map entries:
+    //   insights[].what -> insights.what
+    // We only strip the literal "[]" marker; we do NOT alter numeric indices like [0].
+    return path.replace(/\[\]/g, "");
+}
+
 function buildPreviewOrdering(previewTitleMap?: PreviewTitleMap): PreviewOrdering {
     const titleByPath: Record<string, string> = {};
     const orderByParent: Record<string, string[]> = {};
@@ -27,9 +34,11 @@ function buildPreviewOrdering(previewTitleMap?: PreviewTitleMap): PreviewOrderin
 
     const addEntry = (path: string, title: string) => {
         if (!path || typeof path !== "string") return;
-        if (typeof title === "string" && title.trim()) titleByPath[path] = title;
 
-        const parts = path.split(".").filter(Boolean);
+        const normalizedPath = normalizePreviewPath(path);
+        if (typeof title === "string" && title.trim()) titleByPath[normalizedPath] = title;
+
+        const parts = normalizedPath.split(".").filter(Boolean);
         if (parts.length === 0) return;
         const key = parts[parts.length - 1];
         const parentPath = parts.slice(0, -1).join(".");

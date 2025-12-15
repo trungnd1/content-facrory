@@ -189,6 +189,7 @@ class Orchestrator:
                 execution.result = current_data
                 await self.session.commit()
                 await self.session.refresh(execution)
+                await prune_workflow_executions(self.session, execution.workflow_id, keep_last=3)
                 return execution
 
             if step.type == "MANUAL_REVIEW" or step.requires_approval:
@@ -339,6 +340,7 @@ class Orchestrator:
                     execution.status = "failed"
                     await self.session.commit()
                     await self.session.refresh(execution)
+                    await prune_workflow_executions(self.session, execution.workflow_id, keep_last=3)
                     return execution
 
         # If we exit loop without explicit END, mark as completed
@@ -346,7 +348,47 @@ class Orchestrator:
         execution.result = current_data
         await self.session.commit()
         await self.session.refresh(execution)
+        await prune_workflow_executions(self.session, execution.workflow_id, keep_last=3)
         return execution
+
+
+async def prune_workflow_executions(
+    session: AsyncSession,
+    workflow_id: Optional[str],
+    keep_last: int = 3,
+) -> None:
+    """Keep only the latest N executions per workflow.
+
+    To avoid disrupting active work, this prunes only terminal executions
+    (completed/failed/cancelled). If there are many non-terminal executions,
+    total count can exceed N until those finish.
+    """
+
+    if not workflow_id or keep_last <= 0:
+        return
+
+    try:
+        stmt = (
+            select(WorkflowExecution)
+            .where(WorkflowExecution.workflow_id == workflow_id)
+            .order_by(WorkflowExecution.created_at.desc())
+            .offset(keep_last)
+        )
+        res = await session.execute(stmt)
+        old_execs = list(res.scalars().all())
+
+        terminal = {"completed", "failed", "cancelled"}
+        deleted_any = False
+        for ex in old_execs:
+            if getattr(ex, "status", None) in terminal:
+                await session.delete(ex)
+                deleted_any = True
+
+        if deleted_any:
+            await session.commit()
+    except Exception:
+        # Best-effort retention; never break execution flow.
+        return
 
 
 async def approve_step(
@@ -383,4 +425,10 @@ async def reject_step(
     execution.status = "failed"
     await session.commit()
     await session.refresh(execution)
+
+    await prune_workflow_executions(
+        session,
+        str(execution.workflow_id) if execution.workflow_id else None,
+        keep_last=3,
+    )
     return execution
