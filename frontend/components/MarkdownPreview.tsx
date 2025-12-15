@@ -5,7 +5,15 @@ import StarterKit from "@tiptap/starter-kit";
 import { marked } from "marked";
 import { useEffect, useMemo } from "react";
 
-export function MarkdownPreview({ markdown }: { markdown: string }) {
+export type MarkdownPreviewFontSize = "sm" | "md" | "lg";
+
+export function MarkdownPreview({
+  markdown,
+  fontSize = "sm",
+}: {
+  markdown: string;
+  fontSize?: MarkdownPreviewFontSize;
+}) {
   const html = useMemo(() => {
     const md = markdown ?? "";
     // Render markdown to HTML, but drop any raw HTML embedded in the markdown
@@ -31,11 +39,24 @@ export function MarkdownPreview({ markdown }: { markdown: string }) {
     editable: false,
     editorProps: {
       attributes: {
-        class:
-          "prose-content focus:outline-none whitespace-pre-wrap text-sm leading-relaxed text-[#d4d6e6]",
+        class: "prose-content focus:outline-none whitespace-pre-wrap leading-relaxed text-[#d4d6e6]",
       },
     },
   });
+
+  useEffect(() => {
+    if (!editor) return;
+
+    const fontClass =
+      fontSize === "lg" ? "text-lg" : fontSize === "md" ? "text-base" : "text-sm";
+    editor.setOptions({
+      editorProps: {
+        attributes: {
+          class: `prose-content focus:outline-none whitespace-pre-wrap ${fontClass} leading-relaxed text-[#d4d6e6]`,
+        },
+      },
+    });
+  }, [editor, fontSize]);
 
   useEffect(() => {
     if (!editor) return;

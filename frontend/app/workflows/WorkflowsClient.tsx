@@ -22,6 +22,8 @@ import {
 
 type PanelTab = "preview" | "json";
 
+type PreviewFontSize = "sm" | "md" | "lg";
+
 type StatusBadge = {
     label: string;
     className: string;
@@ -593,8 +595,16 @@ export function WorkflowsClient() {
     const [items, setItems] = useState<WorkflowWithLatestExecution[]>([]);
     const [search, setSearch] = useState("");
 
+    const [statusFilter, setStatusFilter] = useState<
+        "all" | "running" | "completed" | "failed" | "waiting_approval" | "stopped"
+    >("all");
+    const [lastRunSort, setLastRunSort] = useState<"desc" | "asc">("desc");
+    const [statusMenuOpen, setStatusMenuOpen] = useState(false);
+    const [sortMenuOpen, setSortMenuOpen] = useState(false);
+
     const [panelOpen, setPanelOpen] = useState(false);
     const [panelTab, setPanelTab] = useState<PanelTab>("preview");
+    const [panelPreviewFontSize, setPanelPreviewFontSize] = useState<PreviewFontSize>("sm");
     const [selectedWorkflow, setSelectedWorkflow] = useState<Workflow | null>(null);
     const [selectedLatestExecution, setSelectedLatestExecution] = useState<WorkflowExecution | null>(null);
     const [selectedExecutionSteps, setSelectedExecutionSteps] = useState<WorkflowExecutionStep[]>([]);
@@ -603,6 +613,9 @@ export function WorkflowsClient() {
 
     const selectedWorkflowIdRef = useRef<string | null>(null);
     const pollInFlightRef = useRef(false);
+
+    const statusMenuRef = useRef<HTMLDivElement | null>(null);
+    const sortMenuRef = useRef<HTMLDivElement | null>(null);
 
     const refresh = async () => {
         setLoading(true);
@@ -684,7 +697,23 @@ export function WorkflowsClient() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    const filtered = useMemo(() => {
+    useEffect(() => {
+        const onMouseDown = (e: MouseEvent) => {
+            const target = e.target as Node | null;
+
+            if (!(target && statusMenuRef.current && statusMenuRef.current.contains(target))) {
+                setStatusMenuOpen(false);
+            }
+            if (!(target && sortMenuRef.current && sortMenuRef.current.contains(target))) {
+                setSortMenuOpen(false);
+            }
+        };
+
+        document.addEventListener("mousedown", onMouseDown);
+        return () => document.removeEventListener("mousedown", onMouseDown);
+    }, []);
+
+    const scoped = useMemo(() => {
         const q = search.trim().toLowerCase();
 
         return items
@@ -700,16 +729,44 @@ export function WorkflowsClient() {
             });
     }, [items, search, currentProject?.id]);
 
+    const filtered = useMemo(() => {
+        const matchesStatus = (it: WorkflowWithLatestExecution) => {
+            const s = it.latest_execution?.status;
+            if (statusFilter === "all") return true;
+            if (statusFilter === "stopped") return !s || s === "cancelled";
+            return s === statusFilter;
+        };
+
+        const lastRunTs = (it: WorkflowWithLatestExecution): number | null => {
+            const iso = it.latest_execution?.updated_at ?? it.latest_execution?.created_at;
+            if (!iso) return null;
+            const t = new Date(iso).getTime();
+            return Number.isFinite(t) ? t : null;
+        };
+
+        return (scoped ?? [])
+            .filter(matchesStatus)
+            .slice()
+            .sort((a, b) => {
+                const ta = lastRunTs(a);
+                const tb = lastRunTs(b);
+                if (ta == null && tb == null) return (a.workflow.name ?? "").localeCompare(b.workflow.name ?? "");
+                if (ta == null) return 1;
+                if (tb == null) return -1;
+                return lastRunSort === "desc" ? tb - ta : ta - tb;
+            });
+    }, [scoped, statusFilter, lastRunSort]);
+
     const filteredRunningCount = useMemo(() => {
-        return (filtered ?? []).filter((it) => it.latest_execution?.status === "running").length;
-    }, [filtered]);
+        return (scoped ?? []).filter((it) => it.latest_execution?.status === "running").length;
+    }, [scoped]);
 
     const shouldPoll = useMemo(() => {
         // Poll only when there is evidence something is still running.
-        const anyRunning = (filtered ?? []).some((it) => it.latest_execution?.status === "running");
+        const anyRunning = (scoped ?? []).some((it) => it.latest_execution?.status === "running");
         const panelRunning = selectedLatestExecution?.status === "running";
         return anyRunning || panelRunning;
-    }, [filtered, selectedLatestExecution?.status]);
+    }, [scoped, selectedLatestExecution?.status]);
 
     useEffect(() => {
         if (!shouldPoll) return;
@@ -738,6 +795,7 @@ export function WorkflowsClient() {
     const openPanel = async (wf: Workflow) => {
         setSelectedWorkflow(wf);
         setPanelTab("preview");
+        setPanelPreviewFontSize("md");
         setPanelOpen(true);
 
         setSelectedLatestExecution(null);
@@ -882,29 +940,109 @@ export function WorkflowsClient() {
                         <span className="material-symbols-outlined text-[18px]">filter_list</span>
                         <span>Lọc:</span>
                     </div>
-                    <button
-                        type="button"
-                        className="group flex h-8 items-center justify-center gap-x-2 rounded-lg bg-[#282b39] hover:bg-[#3b3f54] border border-transparent hover:border-border-dark pl-3 pr-2 transition-all"
-                    >
-                        <p className="text-white text-xs font-medium">Trạng thái: Tất cả</p>
-                        <span className="material-symbols-outlined text-text-secondary text-[16px]">keyboard_arrow_down</span>
-                    </button>
-                    <button
-                        type="button"
-                        className="group flex h-8 items-center justify-center gap-x-2 rounded-lg bg-[#282b39] hover:bg-[#3b3f54] border border-transparent hover:border-border-dark pl-3 pr-2 transition-all"
-                    >
-                        <p className="text-white text-xs font-medium">
-                            {currentProject?.name ? `Dự án: ${currentProject.name}` : "Dự án: Tất cả"}
-                        </p>
-                        <span className="material-symbols-outlined text-text-secondary text-[16px]">keyboard_arrow_down</span>
-                    </button>
-                    <button
-                        type="button"
-                        className="group flex h-8 items-center justify-center gap-x-2 rounded-lg bg-[#282b39] hover:bg-[#3b3f54] border border-transparent hover:border-border-dark pl-3 pr-2 transition-all"
-                    >
-                        <p className="text-white text-xs font-medium">Sắp xếp: Mới nhất</p>
-                        <span className="material-symbols-outlined text-text-secondary text-[16px]">sort</span>
-                    </button>
+                    <div className="relative" ref={statusMenuRef}>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setStatusMenuOpen((v) => !v);
+                                setSortMenuOpen(false);
+                            }}
+                            className="group flex h-8 items-center justify-center gap-x-2 rounded-lg bg-[#282b39] hover:bg-[#3b3f54] border border-transparent hover:border-border-dark pl-3 pr-2 transition-all"
+                        >
+                            <p className="text-white text-xs font-medium">
+                                Trạng thái: {statusFilter === "all"
+                                    ? "Tất cả"
+                                    : statusFilter === "running"
+                                        ? "Đang chạy"
+                                        : statusFilter === "completed"
+                                            ? "Hoàn thành"
+                                            : statusFilter === "failed"
+                                                ? "Lỗi"
+                                                : statusFilter === "waiting_approval"
+                                                    ? "Chờ duyệt"
+                                                    : "Đã dừng"}
+                            </p>
+                            <span className="material-symbols-outlined text-text-secondary text-[16px]">keyboard_arrow_down</span>
+                        </button>
+                        {statusMenuOpen && (
+                            <div className="absolute left-0 mt-2 w-56 rounded-lg border border-border-dark bg-[#111218] shadow-lg z-50 overflow-hidden">
+                                {(
+                                    [
+                                        { value: "all" as const, label: "Tất cả" },
+                                        { value: "running" as const, label: "Đang chạy" },
+                                        { value: "completed" as const, label: "Hoàn thành" },
+                                        { value: "failed" as const, label: "Lỗi" },
+                                        { value: "waiting_approval" as const, label: "Chờ duyệt" },
+                                        { value: "stopped" as const, label: "Đã dừng" },
+                                    ]
+                                ).map((opt) => (
+                                    <button
+                                        key={opt.value}
+                                        type="button"
+                                        onClick={() => {
+                                            setStatusFilter(opt.value);
+                                            setStatusMenuOpen(false);
+                                        }}
+                                        className={`w-full text-left px-3 py-2 text-xs transition-colors ${
+                                            statusFilter === opt.value
+                                                ? "bg-[#232530] text-white"
+                                                : "text-text-secondary hover:bg-[#232530] hover:text-white"
+                                        }`}
+                                    >
+                                        {opt.label}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="relative" ref={sortMenuRef}>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setSortMenuOpen((v) => !v);
+                                setStatusMenuOpen(false);
+                            }}
+                            className="group flex h-8 items-center justify-center gap-x-2 rounded-lg bg-[#282b39] hover:bg-[#3b3f54] border border-transparent hover:border-border-dark pl-3 pr-2 transition-all"
+                        >
+                            <p className="text-white text-xs font-medium">
+                                Lần chạy cuối: {lastRunSort === "desc" ? "Mới nhất" : "Cũ nhất"}
+                            </p>
+                            <span className="material-symbols-outlined text-text-secondary text-[16px]">sort</span>
+                        </button>
+                        {sortMenuOpen && (
+                            <div className="absolute left-0 mt-2 w-56 rounded-lg border border-border-dark bg-[#111218] shadow-lg z-50 overflow-hidden">
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setLastRunSort("desc");
+                                        setSortMenuOpen(false);
+                                    }}
+                                    className={`w-full text-left px-3 py-2 text-xs transition-colors ${
+                                        lastRunSort === "desc"
+                                            ? "bg-[#232530] text-white"
+                                            : "text-text-secondary hover:bg-[#232530] hover:text-white"
+                                    }`}
+                                >
+                                    Mới nhất
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setLastRunSort("asc");
+                                        setSortMenuOpen(false);
+                                    }}
+                                    className={`w-full text-left px-3 py-2 text-xs transition-colors ${
+                                        lastRunSort === "asc"
+                                            ? "bg-[#232530] text-white"
+                                            : "text-text-secondary hover:bg-[#232530] hover:text-white"
+                                    }`}
+                                >
+                                    Cũ nhất
+                                </button>
+                            </div>
+                        )}
+                    </div>
                     <div className="w-px h-6 bg-border-dark mx-1" />
                     <button
                         type="button"
@@ -1049,7 +1187,7 @@ export function WorkflowsClient() {
                                         <span className="inline-flex items-center gap-2">
                                             <span className="material-symbols-outlined text-[18px] animate-spin">progress_activity</span>
                                             <span>
-                                                {filteredRunningCount}/{filtered.length} workflow đang chạy...
+                                                {filteredRunningCount}/{scoped.length} workflow đang chạy...
                                             </span>
                                         </span>
                                     </td>
@@ -1156,6 +1294,42 @@ export function WorkflowsClient() {
                                     Raw JSON
                                 </button>
                             </div>
+
+                            <div className="flex bg-[#282b39] rounded-lg p-1">
+                                <button
+                                    type="button"
+                                    onClick={() => setPanelPreviewFontSize("lg")}
+                                    className={`px-2.5 py-1 rounded transition-colors ${
+                                        panelPreviewFontSize === "lg"
+                                            ? "bg-primary text-white shadow-sm"
+                                            : "text-[#9da1b9] hover:text-white"
+                                    }`}
+                                >
+                                    <span className="text-sm font-semibold">Large</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setPanelPreviewFontSize("md")}
+                                    className={`px-2.5 py-1 rounded transition-colors ${
+                                        panelPreviewFontSize === "md"
+                                            ? "bg-primary text-white shadow-sm"
+                                            : "text-[#9da1b9] hover:text-white"
+                                    }`}
+                                >
+                                    <span className="text-xs font-semibold">Medium</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setPanelPreviewFontSize("sm")}
+                                    className={`px-2.5 py-1 rounded transition-colors ${
+                                        panelPreviewFontSize === "sm"
+                                            ? "bg-primary text-white shadow-sm"
+                                            : "text-[#9da1b9] hover:text-white"
+                                    }`}
+                                >
+                                    <span className="text-[11px] font-semibold">Small</span>
+                                </button>
+                            </div>
                         </div>
 
                         <div className="flex-1 min-h-0 overflow-y-auto p-4">
@@ -1163,7 +1337,10 @@ export function WorkflowsClient() {
                                 !selectedLatestExecution ? (
                                     <p className="text-sm text-text-secondary">Workflow chưa có execution nào.</p>
                                 ) : (
-                                    <MarkdownPreview markdown={selectedPreviewMarkdown || "(chưa có output hoặc đang chạy)"} />
+                                    <MarkdownPreview
+                                        markdown={selectedPreviewMarkdown || "(chưa có output hoặc đang chạy)"}
+                                        fontSize={panelPreviewFontSize}
+                                    />
                                 )
                             ) : (
                                 <pre className="text-xs text-slate-300 whitespace-pre-wrap break-words">
