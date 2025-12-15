@@ -778,7 +778,7 @@ export function AgentsClient({ initialAgents }: AgentsClientProps) {
                 />
             )}
             <div
-                className={`fixed inset-y-0 right-0 w-[520px] bg-surface-dark border-l border-border-dark shadow-2xl z-30 transform transition-transform duration-300 ease-out grid grid-rows-[auto,1fr,auto] ${panelOpen ? "translate-x-0" : "translate-x-full"
+                className={`fixed inset-y-0 right-0 w-full md:w-1/2 bg-surface-dark border-l border-border-dark shadow-2xl z-30 transform transition-transform duration-300 ease-out grid grid-rows-[auto,1fr,auto] ${panelOpen ? "translate-x-0" : "translate-x-full"
                     }`}
             >
                 {/* Panel Header (row 1, fixed) */}
@@ -813,152 +813,140 @@ export function AgentsClient({ initialAgents }: AgentsClientProps) {
                 <form onSubmit={handleSubmit} className="contents">
                     {/* Scrollable content area (row 2) */}
                     <div className="overflow-y-auto agent-scroll p-6 flex flex-col gap-6">
-                        {/* Basic Info */}
-                        <div className="flex flex-col gap-4">
-                            <label className="flex flex-col gap-2">
-                                <span className="text-sm font-medium text-white">Tên Agent</span>
-                                <input
-                                    className="bg-background-dark border border-border-dark rounded-lg px-3 py-2 text-sm text-white focus:border-primary focus:ring-1 focus:ring-primary placeholder-text-secondary"
-                                    type="text"
-                                    value={name}
-                                    onChange={(e) => setName(e.target.value)}
-                                    disabled={loading}
-                                />
-                            </label>
-                            <label className="flex flex-col gap-2">
-                                <span className="text-sm font-medium text-white">Mô tả ngắn</span>
-                                <textarea
-                                    className="bg-background-dark border border-border-dark rounded-lg px-3 py-2 text-sm text-white focus:border-primary focus:ring-1 focus:ring-primary placeholder-text-secondary resize-none"
-                                    rows={2}
-                                    value={description}
-                                    onChange={(e) => setDescription(e.target.value)}
-                                    disabled={loading}
-                                />
-                            </label>
-                        </div>
-
-                        <hr className="border-border-dark" />
-
-                        {/* Model Config */}
-                        <div className="flex flex-col gap-4">
-                            <h3 className="text-xs font-semibold text-text-secondary uppercase tracking-wider">
-                                Cấu hình LLM
-                            </h3>
-                            <label className="flex flex-col gap-2">
-                                <span className="text-sm font-medium text-white">Model Provider</span>
-                                <div className="relative">
-                                    <select
-                                        className="w-full bg-background-dark border border-border-dark rounded-lg px-3 py-2 text-sm text-white focus:border-primary focus:ring-1 focus:ring-primary appearance-none"
-                                        value={providerId}
-                                        onChange={(e) => {
-                                            const nextId = e.target.value;
-                                            setProviderId(nextId);
-                                            const provider = providers.find((p) => p.id === nextId);
-                                            if (provider && provider.models.length > 0) {
-                                                setModel(provider.models[0].id);
-                                            }
-                                        }}
-                                        disabled={loading}
-                                    >
-                                        {providers.map((p) => (
-                                            <option key={p.id} value={p.id} disabled={!p.enabled}>
-                                                {p.name}
-                                                {!p.enabled ? " (chưa cấu hình API key)" : ""}
-                                            </option>
-                                        ))}
-                                    </select>
-                                    <span className="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-text-secondary pointer-events-none text-[20px]">
-                                        expand_more
-                                    </span>
-                                </div>
-                            </label>
-                            <div className="grid grid-cols-2 gap-4">
+                        {/* Top row: Agent description | LLM config */}
+                        <div className="grid grid-cols-2 gap-6">
+                            <div className="flex flex-col gap-4">
+                                <h3 className="text-xs font-semibold text-text-secondary uppercase tracking-wider">
+                                    Mô tả Agent
+                                </h3>
                                 <label className="flex flex-col gap-2">
-                                    <span className="text-sm font-medium text-white">Model</span>
+                                    <span className="text-sm font-medium text-white">Tên Agent</span>
+                                    <input
+                                        className="bg-background-dark border border-border-dark rounded-lg px-3 py-2 text-sm text-white focus:outline focus:outline-1 focus:outline-border-dark focus:outline-offset-0 focus:ring-0 placeholder-text-secondary"
+                                        type="text"
+                                        value={name}
+                                        onChange={(e) => setName(e.target.value)}
+                                        disabled={loading}
+                                    />
+                                </label>
+                                <label className="flex flex-col gap-2">
+                                    <span className="text-sm font-medium text-white">Mô tả ngắn</span>
+                                    <textarea
+                                        className="bg-background-dark border border-border-dark rounded-lg px-3 py-2 text-sm text-white focus:outline focus:outline-1 focus:outline-border-dark focus:outline-offset-0 focus:ring-0 placeholder-text-secondary resize-none"
+                                        rows={2}
+                                        value={description}
+                                        onChange={(e) => setDescription(e.target.value)}
+                                        disabled={loading}
+                                    />
+                                </label>
+                            </div>
+
+                            <div className="flex flex-col gap-4">
+                                <h3 className="text-xs font-semibold text-text-secondary uppercase tracking-wider">
+                                    Cấu hình LLM
+                                </h3>
+                                <label className="flex flex-col gap-2">
+                                    <span className="text-sm font-medium text-white">Model Provider</span>
                                     <div className="relative">
                                         <select
-                                            className="w-full bg-background-dark border border-border-dark rounded-lg px-3 py-2 text-sm text-white focus:border-primary focus:ring-1 focus:ring-primary appearance-none"
-                                            value={model}
-                                            onChange={(e) => setModel(e.target.value)}
+                                            className="w-full bg-background-dark border border-border-dark rounded-lg px-3 py-2 text-sm text-white focus:outline focus:outline-1 focus:outline-border-dark focus:outline-offset-0 focus:ring-0 appearance-none"
+                                            value={providerId}
+                                            onChange={(e) => {
+                                                const nextId = e.target.value;
+                                                setProviderId(nextId);
+                                                const provider = providers.find((p) => p.id === nextId);
+                                                if (provider && provider.models.length > 0) {
+                                                    setModel(provider.models[0].id);
+                                                }
+                                            }}
                                             disabled={loading}
                                         >
-                                            {providers
-                                                .find((p) => p.id === providerId)?.models.map((m) => (
-                                                    <option key={m.id} value={m.id}>
-                                                        {m.label}
-                                                    </option>
-                                                )) ?? null}
+                                            {providers.map((p) => (
+                                                <option key={p.id} value={p.id} disabled={!p.enabled}>
+                                                    {p.name}
+                                                    {!p.enabled ? " (chưa cấu hình API key)" : ""}
+                                                </option>
+                                            ))}
                                         </select>
                                         <span className="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-text-secondary pointer-events-none text-[20px]">
                                             expand_more
                                         </span>
                                     </div>
                                 </label>
-                                <label className="flex flex-col gap-2">
-                                    <span className="text-sm font-medium text-white">
-                                        Nhiệt độ ({temperature.toFixed(1)})
-                                    </span>
-                                    <input
-                                        className="w-full h-2 bg-border-dark rounded-lg appearance-none cursor-pointer accent-primary mt-3"
-                                        type="range"
-                                        min={0}
-                                        max={1}
-                                        step={0.1}
-                                        value={temperature}
-                                        onChange={(e) => setTemperature(parseFloat(e.target.value))}
-                                        disabled={loading}
-                                    />
-                                </label>
-                            </div>
-                        </div>
 
-                        <hr className="border-border-dark" />
+                                <div className="grid grid-cols-2 gap-4">
+                                    <label className="flex flex-col gap-2">
+                                        <span className="text-sm font-medium text-white">Model</span>
+                                        <div className="relative">
+                                            <select
+                                                className="w-full bg-background-dark border border-border-dark rounded-lg px-3 py-2 text-sm text-white focus:outline focus:outline-1 focus:outline-border-dark focus:outline-offset-0 focus:ring-0 appearance-none"
+                                                value={model}
+                                                onChange={(e) => setModel(e.target.value)}
+                                                disabled={loading}
+                                            >
+                                                {providers
+                                                    .find((p) => p.id === providerId)?.models.map((m) => (
+                                                        <option key={m.id} value={m.id}>
+                                                            {m.label}
+                                                        </option>
+                                                    )) ?? null}
+                                            </select>
+                                            <span className="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-text-secondary pointer-events-none text-[20px]">
+                                                expand_more
+                                            </span>
+                                        </div>
+                                    </label>
 
-                        {/* System Instruction */}
-                        <div className="flex flex-col gap-2 min-h-[200px]">
-                            <div className="flex items-center justify-between">
-                                <span className="text-sm font-medium text-white">System Instruction</span>
-                                <button
-                                    type="button"
-                                    className="text-primary text-xs font-medium hover:underline"
-                                >
-                                    Mở rộng
-                                </button>
-                            </div>
-                            <div className="flex-1 bg-background-dark border border-border-dark rounded-lg p-3 relative group">
-                                <textarea
-                                    className="w-full h-full min-h-[160px] bg-transparent border-none p-0 text-sm text-gray-300 font-mono focus:ring-0 resize-none leading-relaxed agent-scroll"
-                                    spellCheck={false}
-                                    value={systemPrompt}
-                                    onChange={(e) => setSystemPrompt(e.target.value)}
-                                    disabled={loading}
-                                />
-                                <div className="absolute bottom-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                    <span className="text-[10px] text-text-secondary bg-surface-dark px-2 py-1 rounded border border-border-dark">
-                                        System prompt
-                                    </span>
+                                    <label className="flex flex-col gap-2">
+                                        <span className="text-sm font-medium text-white">
+                                            Temperature ({temperature.toFixed(1)})
+                                        </span>
+                                        <input
+                                            className="w-full h-2 bg-border-dark rounded-lg appearance-none cursor-pointer accent-primary mt-3"
+                                            type="range"
+                                            min={0}
+                                            max={1}
+                                            step={0.1}
+                                            value={temperature}
+                                            onChange={(e) => setTemperature(parseFloat(e.target.value))}
+                                            disabled={loading}
+                                        />
+                                    </label>
                                 </div>
                             </div>
                         </div>
 
                         <hr className="border-border-dark" />
 
-                        {/* User prompt */}
-                        <div className="flex flex-col gap-4">
-                            <h3 className="text-xs font-semibold text-text-secondary uppercase tracking-wider">
-                                User prompt
-                            </h3>
-                            <label className="flex flex-col gap-2">
-                                <span className="text-sm font-medium text-white">User prompt</span>
+                        {/* System Instruction */}
+                        <div className="flex flex-col gap-2">
+                            <span className="text-sm font-medium text-white">System Instruction</span>
+                            <div className="flex-1 bg-background-dark border border-border-dark rounded-lg p-3 relative group">
                                 <textarea
-                                    className="bg-background-dark border border-border-dark rounded-lg px-3 py-2 text-xs text-gray-300 font-mono focus:border-primary focus:ring-1 focus:ring-primary placeholder-text-secondary resize-y min-h-[120px] agent-scroll"
-                                    placeholder={"Ví dụ: Hãy phân tích INPUT ở trên và trả về JSON đúng schema OUTPUT..."}
+                                    className="w-full h-full min-h-[240px] bg-transparent border-none p-0 text-sm text-gray-300 font-mono focus:outline focus:outline-1 focus:outline-border-dark focus:outline-offset-0 focus:ring-0 resize-none leading-relaxed agent-scroll"
+                                    spellCheck={false}
+                                    value={systemPrompt}
+                                    onChange={(e) => setSystemPrompt(e.target.value)}
+                                    disabled={loading}
+                                />
+                            </div>
+                        </div>
+
+                        <hr className="border-border-dark" />
+
+                        {/* User Prompt */}
+                        <div className="flex flex-col gap-2">
+                            <span className="text-sm font-medium text-white">User Prompt</span>
+                            <div className="flex-1 bg-background-dark border border-border-dark rounded-lg p-3 relative group">
+                                <textarea
+                                    className="w-full h-full min-h-[200px] bg-transparent border-none p-0 text-sm text-gray-300 font-mono focus:outline focus:outline-1 focus:outline-border-dark focus:outline-offset-0 focus:ring-0 resize-none leading-relaxed agent-scroll"
+                                    placeholder={"Ví dụ: Đây là input JSON: {{input_json}}\\nHãy trả về đúng JSON theo schema."}
                                     spellCheck={false}
                                     value={userPrompt}
                                     onChange={(e) => setUserPrompt(e.target.value)}
                                     disabled={loading}
                                 />
-                            </label>
+                            </div>
                         </div>
 
                         {error && (

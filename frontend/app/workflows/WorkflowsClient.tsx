@@ -2,11 +2,16 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { createPortal } from "react-dom";
 import { MarkdownPreview } from "@/components/MarkdownPreview";
 import { useProject } from "@/components/ProjectProvider";
 import { formatAgentOutputToMarkdown } from "@/lib/previewFormat";
 import {
+    createWorkflowForProject,
+    createWorkflowStep,
+    deleteWorkflow,
     getAgent,
+    getWorkflow,
     Workflow,
     WorkflowExecution,
     WorkflowExecutionStep,
@@ -14,6 +19,9 @@ import {
     WorkflowWithLatestExecution,
     cancelExecution,
     getWorkflowLatestExecution,
+    updateWorkflowOutputConfig,
+    updateWorkflowStep,
+    updateWorkflowWcs,
     listExecutionSteps,
     listWorkflowSteps,
     listWorkflowsWithLatestExecution,
@@ -617,6 +625,21 @@ export function WorkflowsClient() {
     const statusMenuRef = useRef<HTMLDivElement | null>(null);
     const sortMenuRef = useRef<HTMLDivElement | null>(null);
 
+    const [rowMenu, setRowMenu] = useState<
+        | {
+              workflowId: string;
+              wf: Workflow;
+              isRunning: boolean;
+              top: number;
+              left: number;
+          }
+        | null
+    >(null);
+    const rowMenuRef = useRef<HTMLDivElement | null>(null);
+    const [duplicateBusyId, setDuplicateBusyId] = useState<string | null>(null);
+    const [deleteTarget, setDeleteTarget] = useState<Workflow | null>(null);
+    const [deleteBusy, setDeleteBusy] = useState(false);
+
     const refresh = async () => {
         setLoading(true);
         try {
@@ -707,11 +730,127 @@ export function WorkflowsClient() {
             if (!(target && sortMenuRef.current && sortMenuRef.current.contains(target))) {
                 setSortMenuOpen(false);
             }
+
+            // Close per-row context menu when clicking outside it.
+            const el = target as HTMLElement | null;
+            if (
+                !(
+                    target &&
+                    ((rowMenuRef.current && rowMenuRef.current.contains(target)) ||
+                        (el && el.closest("[data-wf-row-menu-trigger='true']")))
+                )
+            ) {
+                setRowMenu(null);
+            }
         };
 
         document.addEventListener("mousedown", onMouseDown);
         return () => document.removeEventListener("mousedown", onMouseDown);
     }, []);
+
+    const handleDuplicateWorkflow = async (workflowId: string) => {
+        if (duplicateBusyId) return;
+        setRowMenu(null);
+        setDuplicateBusyId(workflowId);
+
+        try {
+            const original = await getWorkflow(workflowId);
+            const originalSteps = await listWorkflowSteps(workflowId).catch(() => []);
+
+            const created = await createWorkflowForProject(original.project_id, {
+                name: `${original.name} (duplicated)`,
+                description: original.description ?? undefined,
+            });
+
+            // Copy WCS and output_config if present.
+            if ((original as any)?.wcs) {
+                await updateWorkflowWcs(created.id, (original as any).wcs);
+            }
+            if (Array.isArray((original as any)?.output_config)) {
+                await updateWorkflowOutputConfig(created.id, (original as any).output_config);
+            }
+
+            // Copy steps, then fix next_step_id references.
+            const ordered = (originalSteps ?? []).slice().sort((a, b) => a.step_number - b.step_number);
+            const idMap = new Map<string, string>();
+
+            for (const s of ordered) {
+                const newStep = await createWorkflowStep(created.id, {
+                    step_number: s.step_number,
+                    name: s.name,
+                    type: s.type,
+                    agent_id: s.agent_id ?? null,
+                    requires_approval: !!s.requires_approval,
+                    config: s.config ?? null,
+                    next_step_id: null,
+                });
+                idMap.set(s.id, newStep.id);
+            }
+
+            for (const s of ordered) {
+                const newStepId = idMap.get(s.id);
+                if (!newStepId) continue;
+                if (!s.next_step_id) continue;
+                const newNext = idMap.get(s.next_step_id);
+                if (!newNext) continue;
+                await updateWorkflowStep(created.id, newStepId, { next_step_id: newNext });
+            }
+
+            await refresh();
+        } catch (e) {
+            console.error(e);
+            alert("Không thể duplicate workflow. Vui lòng thử lại.");
+        } finally {
+            setDuplicateBusyId(null);
+        }
+    };
+
+    const confirmDeleteWorkflow = (wf: Workflow, isRunning?: boolean) => {
+        if (isRunning) {
+            setRowMenu(null);
+            alert("Không thể xóa workflow khi đang chạy.");
+            return;
+        }
+        setRowMenu(null);
+        setDeleteTarget(wf);
+    };
+
+    const handleDeleteWorkflow = async () => {
+        if (!deleteTarget) return;
+        if (deleteBusy) return;
+
+        const runningNow = (items ?? []).some(
+            (it) => it.workflow?.id === deleteTarget.id && it.latest_execution?.status === "running",
+        );
+        if (runningNow) {
+            alert("Không thể xóa workflow khi đang chạy.");
+            setDeleteTarget(null);
+            return;
+        }
+
+        setDeleteBusy(true);
+        try {
+            await deleteWorkflow(deleteTarget.id);
+
+            // If the deleted workflow is open in the panel, close it.
+            if (selectedWorkflow?.id === deleteTarget.id) {
+                setPanelOpen(false);
+                selectedWorkflowIdRef.current = null;
+                setSelectedWorkflow(null);
+                setSelectedLatestExecution(null);
+                setSelectedExecutionSteps([]);
+                setSelectedWorkflowSteps([]);
+            }
+
+            setDeleteTarget(null);
+            await refresh();
+        } catch (e) {
+            console.error(e);
+            alert("Không thể xóa workflow. Vui lòng thử lại.");
+        } finally {
+            setDeleteBusy(false);
+        }
+    };
 
     const scoped = useMemo(() => {
         const q = search.trim().toLowerCase();
@@ -920,6 +1059,104 @@ export function WorkflowsClient() {
 
     return (
         <>
+            {rowMenu && typeof document !== "undefined" &&
+                createPortal(
+                    <div
+                        ref={rowMenuRef}
+                        className="fixed w-44 rounded-lg border border-border-dark bg-[#111218] shadow-lg z-[9999] overflow-hidden"
+                        style={{ top: rowMenu.top, left: rowMenu.left }}
+                    >
+                        <button
+                            type="button"
+                            onClick={() => handleDuplicateWorkflow(rowMenu.workflowId)}
+                            className="w-full flex items-center gap-2 px-3 py-2 text-xs text-text-secondary hover:bg-[#232530] hover:text-white transition-colors"
+                        >
+                            <span className="material-symbols-outlined text-[16px]">content_copy</span>
+                            <span>
+                                {duplicateBusyId === rowMenu.workflowId ? "Đang duplicate..." : "Duplicate"}
+                            </span>
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => confirmDeleteWorkflow(rowMenu.wf, rowMenu.isRunning)}
+                            disabled={rowMenu.isRunning}
+                            className={`w-full flex items-center gap-2 px-3 py-2 text-xs transition-colors ${
+                                rowMenu.isRunning
+                                    ? "text-red-300/40 cursor-not-allowed"
+                                    : "text-red-300 hover:bg-[#232530] hover:text-red-200"
+                            }`}
+                            title={rowMenu.isRunning ? "Không thể xóa khi workflow đang chạy" : ""}
+                        >
+                            <span className="material-symbols-outlined text-[16px]">delete</span>
+                            <span>Delete</span>
+                        </button>
+                    </div>,
+                    document.body,
+                )}
+
+            {deleteTarget && (
+                <div className="fixed inset-0 z-50">
+                    <div
+                        className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+                        onClick={() => {
+                            if (deleteBusy) return;
+                            setDeleteTarget(null);
+                        }}
+                    />
+                    <div className="absolute inset-0 flex items-center justify-center p-4">
+                        <div className="w-full max-w-lg rounded-xl border border-border-dark bg-surface-dark shadow-2xl overflow-hidden">
+                            <div className="px-5 py-4 border-b border-border-dark flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                    <span className="material-symbols-outlined text-red-300">warning</span>
+                                    <h3 className="text-sm font-semibold text-white">Xác nhận xóa workflow</h3>
+                                </div>
+                                <button
+                                    type="button"
+                                    className="text-text-secondary hover:text-white transition-colors"
+                                    onClick={() => {
+                                        if (deleteBusy) return;
+                                        setDeleteTarget(null);
+                                    }}
+                                    title="Đóng"
+                                >
+                                    <span className="material-symbols-outlined text-[20px]">close</span>
+                                </button>
+                            </div>
+
+                            <div className="px-5 py-4">
+                                <p className="text-sm text-text-secondary">
+                                    Bạn có chắc chắn muốn xóa workflow <span className="text-white font-semibold">{deleteTarget.name}</span>?
+                                </p>
+                                <p className="mt-2 text-xs text-text-secondary">
+                                    Đây là hành động không thể hoàn tác. Tất cả dữ liệu liên quan đến workflow (steps, executions, logs, cấu hình) sẽ bị xóa.
+                                </p>
+                            </div>
+
+                            <div className="px-5 py-4 border-t border-border-dark flex items-center justify-end gap-2">
+                                <button
+                                    type="button"
+                                    className="h-9 rounded-lg px-4 text-sm font-semibold bg-[#282b39] text-white hover:bg-[#3b3f54] transition-colors"
+                                    onClick={() => {
+                                        if (deleteBusy) return;
+                                        setDeleteTarget(null);
+                                    }}
+                                >
+                                    Hủy
+                                </button>
+                                <button
+                                    type="button"
+                                    className="h-9 rounded-lg px-4 text-sm font-semibold bg-red-500 text-white hover:bg-red-600 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                                    onClick={handleDeleteWorkflow}
+                                    disabled={deleteBusy}
+                                >
+                                    {deleteBusy ? "Đang xóa..." : "Xóa"}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* Toolbar: Search & Filters */}
             <div className="flex flex-col md:flex-row gap-4 justify-between items-start md:items-center bg-surface-dark p-4 rounded-xl border border-border-dark">
                 {/* Search */}
@@ -1172,6 +1409,29 @@ export function WorkflowsClient() {
                                                     type="button"
                                                     className="size-8 flex items-center justify-center rounded-md hover:bg-[#282b39] text-text-secondary hover:text-white transition-colors"
                                                     title="More"
+                                                    data-wf-row-menu-trigger="true"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                                                        const menuWidth = 176;
+                                                        const pad = 8;
+                                                        let left = rect.right - menuWidth;
+                                                        left = Math.max(pad, Math.min(left, window.innerWidth - menuWidth - pad));
+                                                        let top = rect.bottom + 8;
+                                                        top = Math.max(pad, Math.min(top, window.innerHeight - 140));
+
+                                                        setRowMenu((prev) =>
+                                                            prev?.workflowId === wf.id
+                                                                ? null
+                                                                : {
+                                                                    workflowId: wf.id,
+                                                                    wf,
+                                                                    isRunning,
+                                                                    top,
+                                                                    left,
+                                                                },
+                                                        );
+                                                    }}
                                                 >
                                                     <span className="material-symbols-outlined text-[20px]">more_vert</span>
                                                 </button>
