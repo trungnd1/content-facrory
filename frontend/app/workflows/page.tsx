@@ -2,6 +2,7 @@ import { Sidebar } from "@/components/Sidebar";
 import { ProjectSelectorBar } from "@/components/ProjectSelectorBar";
 import { CreateWorkflowButton } from "./CreateWorkflowButton";
 import { WorkflowsClient } from "./WorkflowsClient";
+import { ProjectQuerySync } from "./ProjectQuerySync";
 
 export const dynamic = "force-dynamic";
 
@@ -17,6 +18,7 @@ export default async function WorkflowsPage() {
                     <div className="px-6 md:px-12 flex flex-1 justify-center py-8">
                         <div className="flex flex-col max-w-[1200px] flex-1 gap-6">
                             <ProjectSelectorBar />
+                            <ProjectQuerySync />
 
                             {/* Page Heading */}
                             <div className="flex flex-wrap justify-between items-end gap-4 border-b border-border-dark pb-6">

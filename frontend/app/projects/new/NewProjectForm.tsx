@@ -52,13 +52,13 @@ export function NewProjectForm() {
           name: name.trim(),
           description: description.trim() || undefined,
         });
-        router.push(`/projects/${project.id}/workflows`);
+        router.push(`/workflows?projectId=${project.id}`);
       } else {
         const project = await createProject({
           name: name.trim(),
           description: description.trim() || undefined,
         });
-        router.push(`/projects/${project.id}/workflows`);
+        router.push(`/workflows?projectId=${project.id}`);
       }
     } catch (err: any) {
       setError(err.message ?? "Failed to create project");

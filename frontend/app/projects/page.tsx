@@ -129,7 +129,7 @@ export default async function ProjectsPage() {
                                             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-blue-500/10 text-blue-500">
                                                 <span className="material-symbols-outlined">description</span>
                                             </div>
-                                            <Link href={`/projects/${project.id}/workflows`} className="flex flex-col">
+                                            <Link href={`/workflows?projectId=${project.id}`} className="flex flex-col">
                                                 <p className="text-white text-sm font-bold hover:underline">
                                                     {project.name}
                                                 </p>
