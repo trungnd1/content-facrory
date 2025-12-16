@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import json
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.db_models import (
@@ -82,6 +82,60 @@ class Orchestrator:
         )
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
+
+    async def _resolve_workflow_output_input_source(
+        self,
+        *,
+        upstream_workflow_id: str,
+        project_id: Any,
+    ) -> Dict[str, Any]:
+        """Resolve upstream workflow output for input_source.
+
+        - Uses latest completed execution for the upstream workflow.
+        - Filters returned data by upstream workflow.output_config.
+        - Raises ValueError for any missing/invalid state (hard error).
+        """
+
+        if not upstream_workflow_id:
+            raise ValueError("input_source.workflow_id is required")
+        if not project_id:
+            raise ValueError("Execution project_id is missing")
+
+        upstream_wf = await self.session.get(Workflow, upstream_workflow_id)
+        if upstream_wf is None:
+            raise ValueError("Upstream workflow not found")
+
+        if getattr(upstream_wf, "project_id", None) != project_id:
+            raise ValueError("Upstream workflow must be in the same project")
+
+        oc = getattr(upstream_wf, "output_config", None)
+        output_config: List[str] = [str(x) for x in oc] if isinstance(oc, list) else []
+        output_config = [k.strip() for k in output_config if isinstance(k, str) and k.strip()]
+        if not output_config:
+            raise ValueError("Upstream workflow has no output_config defined")
+
+        stmt = (
+            select(WorkflowExecution)
+            .where(WorkflowExecution.workflow_id == upstream_workflow_id)
+            .where(WorkflowExecution.project_id == project_id)
+            .where(func.lower(WorkflowExecution.status) == "completed")
+            .order_by(WorkflowExecution.created_at.desc())
+            .limit(1)
+        )
+        result = await self.session.execute(stmt)
+        latest = result.scalars().first()
+        if latest is None:
+            raise ValueError("Upstream workflow has no completed execution")
+
+        raw_result = getattr(latest, "result", None)
+        if not isinstance(raw_result, dict) or not raw_result:
+            raise ValueError("Upstream latest execution has no result")
+
+        filtered: Dict[str, Any] = {k: raw_result.get(k) for k in output_config if k in raw_result}
+        if not filtered:
+            raise ValueError("Upstream latest execution result has no keys from output_config")
+
+        return filtered
 
     async def start_execution(
         self,
@@ -224,6 +278,60 @@ class Orchestrator:
                     await self.session.refresh(execution)
                     return execution
 
+                # Inject per-agent config from workflow WCS if present.
+                agent_config = workflow_wcs.get(str(agent.id)) if isinstance(workflow_wcs, dict) else None
+
+                # Workflow input source: allow the (first) agent to pull input
+                # from an upstream workflow's latest completed output.
+                if isinstance(agent_config, dict):
+                    input_source = agent_config.get("input_source")
+                    if isinstance(input_source, dict) and input_source.get("type") == "workflow_output":
+                        upstream_workflow_id = input_source.get("workflow_id")
+                        policy = input_source.get("policy")
+                        if policy != "latest_completed":
+                            # Only policy supported in approach 1.
+                            exec_step = WorkflowExecutionStep(
+                                execution_id=execution.id,
+                                step_id=step.id,
+                                agent_id=agent.id,
+                                status="failed",
+                                input=current_data,
+                                error="Unsupported input_source policy",
+                                started_at=datetime.utcnow(),
+                                finished_at=datetime.utcnow(),
+                            )
+                            self.session.add(exec_step)
+                            execution.status = "failed"
+                            await self.session.commit()
+                            await self.session.refresh(execution)
+                            return execution
+
+                        try:
+                            upstream_data = await self._resolve_workflow_output_input_source(
+                                upstream_workflow_id=str(upstream_workflow_id) if upstream_workflow_id else "",
+                                project_id=getattr(execution, "project_id", None),
+                            )
+                        except ValueError as exc:
+                            exec_step = WorkflowExecutionStep(
+                                execution_id=execution.id,
+                                step_id=step.id,
+                                agent_id=agent.id,
+                                status="failed",
+                                input=current_data,
+                                error=str(exc),
+                                started_at=datetime.utcnow(),
+                                finished_at=datetime.utcnow(),
+                            )
+                            self.session.add(exec_step)
+                            execution.status = "failed"
+                            await self.session.commit()
+                            await self.session.refresh(execution)
+                            return execution
+
+                        # Merge upstream output into current_data so it becomes
+                        # part of this agent input (and optionally selectable).
+                        current_data.update(upstream_data)
+
                 # Determine which inputs should be passed to this agent.
                 agent_input: Dict[str, Any] = dict(current_data)
                 step_config = step.config if isinstance(step.config, dict) else {}
@@ -248,8 +356,6 @@ class Orchestrator:
                         if key in normalized_keys
                     }
 
-                # Inject per-agent config from workflow WCS if present.
-                agent_config = workflow_wcs.get(str(agent.id)) if isinstance(workflow_wcs, dict) else None
                 if isinstance(agent_config, dict):
                     agent_input = dict(agent_input)
                     agent_input["config"] = agent_config

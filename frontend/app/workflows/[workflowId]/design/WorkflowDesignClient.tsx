@@ -16,6 +16,7 @@ import {
     listAgents,
     listExecutionSteps,
     listWorkflowSteps,
+    listWorkflowsByProject,
     runWorkflow,
     updateWorkflowOutputConfig,
     updateWorkflowWcs,
@@ -25,6 +26,14 @@ import {
 
 type WorkflowConfig = Record<string, Record<string, any>>;
 type WorkflowOutputConfig = string[];
+
+type WorkflowInputSource =
+    | {
+          type: "workflow_output";
+          workflow_id: string;
+          policy: "latest_completed";
+      }
+    | null;
 
 function tryParseLooseJsonValue(text: string): any | null {
     if (!text) return null;
@@ -321,6 +330,33 @@ export function WorkflowDesignClient({ workflow }: WorkflowDesignClientProps) {
     const [workflowOutputConfig, setWorkflowOutputConfig] = useState<WorkflowOutputConfig>([]);
     const [workflowOutputConfigDraft, setWorkflowOutputConfigDraft] = useState<WorkflowOutputConfig | null>(null);
     const [draggingOutputKey, setDraggingOutputKey] = useState<string | null>(null);
+
+    const [projectWorkflows, setProjectWorkflows] = useState<Workflow[]>([]);
+
+    const firstAgentId = useMemo(() => {
+        const ordered = steps
+            .slice()
+            .sort((a, b) => (a.step_number ?? 0) - (b.step_number ?? 0));
+        const first = ordered.find((s) => s.type === "AGENT" && s.agent_id);
+        return (first?.agent_id as string | undefined) ?? null;
+    }, [steps]);
+
+    useEffect(() => {
+        if (!workflow?.project_id) return;
+        let cancelled = false;
+        listWorkflowsByProject(workflow.project_id)
+            .then((items) => {
+                if (cancelled) return;
+                const filtered = (items ?? []).filter((w) => w.id !== workflow.id);
+                setProjectWorkflows(filtered);
+            })
+            .catch(() => {
+                if (!cancelled) setProjectWorkflows([]);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [workflow?.id, workflow?.project_id]);
 
     // Drag state for step reordering
     const [draggingStepId, setDraggingStepId] = useState<string | null>(null);
@@ -1488,6 +1524,68 @@ export function WorkflowDesignClient({ workflow }: WorkflowDesignClientProps) {
                         </p>
 
                         <div className="max-h-[60vh] overflow-y-auto space-y-4 pr-1">
+                            {/* Workflow Input Source (First Agent) */}
+                            {(() => {
+                                if (!firstAgentId) return null;
+
+                                const draftOrSaved = (workflowConfigDraft ?? workflowConfig) as WorkflowConfig;
+                                const firstCfg = (draftOrSaved[firstAgentId] ?? {}) as Record<string, any>;
+                                const raw = firstCfg?.input_source;
+                                const selectedWorkflowId =
+                                    raw && typeof raw === "object" && typeof raw.workflow_id === "string" ? raw.workflow_id : "";
+
+                                return (
+                                    <div className="rounded-lg border border-[#282b39] bg-[#151722] p-3">
+                                        <p className="text-xs font-semibold text-white mb-2">Workflow Input Source (First Agent)</p>
+                                        <p className="text-[11px] text-[#9da1b9] mb-3">
+                                            Chọn workflow upstream để lấy <span className="text-white">latest completed</span> output (filtered by upstream
+                                            <span className="text-white"> output_config</span>) làm input cho agent đầu tiên.
+                                        </p>
+
+                                        <label className="block">
+                                            <span className="block text-[11px] font-semibold text-[#9da1b9] mb-1">Input source workflow</span>
+                                            <select
+                                                value={selectedWorkflowId}
+                                                onChange={(e) => {
+                                                    const nextWorkflowId = e.target.value;
+                                                    setWorkflowConfigDraft((prev) => {
+                                                        const base =
+                                                            prev ??
+                                                            (JSON.parse(JSON.stringify(workflowConfig)) as WorkflowConfig);
+                                                        const prevAgentCfg = (base[firstAgentId] ?? {}) as Record<string, any>;
+                                                        const nextAgentCfg: Record<string, any> = { ...prevAgentCfg };
+
+                                                        if (!nextWorkflowId) {
+                                                            delete nextAgentCfg.input_source;
+                                                        } else {
+                                                            const input_source: WorkflowInputSource = {
+                                                                type: "workflow_output",
+                                                                workflow_id: nextWorkflowId,
+                                                                policy: "latest_completed",
+                                                            };
+                                                            nextAgentCfg.input_source = input_source;
+                                                        }
+
+                                                        return {
+                                                            ...base,
+                                                            [firstAgentId]: nextAgentCfg,
+                                                        };
+                                                    });
+                                                }}
+                                                className="w-full rounded-md border border-[#3b3f54] bg-[#0f1116] px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-primary"
+                                            >
+                                                <option value="">None</option>
+                                                {projectWorkflows.map((wf) => (
+                                                    <option key={wf.id} value={wf.id}>
+                                                        {wf.name}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                        </label>
+                                    </div>
+                                );
+                            })()}
+
                             {/* Workflow Output Config */}
                             <div className="rounded-lg border border-[#282b39] bg-[#151722] p-3">
                                 <p className="text-xs font-semibold text-white mb-2">Workflow Output Config</p>
@@ -1654,7 +1752,7 @@ export function WorkflowDesignClient({ workflow }: WorkflowDesignClientProps) {
                                         agents.find((a) => a.id === agentId)?.name ?? `Agent ${agentId}`;
                                     const cfg = (workflowConfigDraft ?? workflowConfig)[agentId] ?? {};
                                     const rawKeys = Object.keys(cfg);
-                                    const keys = rawKeys.filter((k) => k !== "preview_title_map");
+                                    const keys = rawKeys.filter((k) => k !== "preview_title_map" && k !== "input_source");
 
                                     return (
                                         <div key={agentId} className="rounded-lg border border-[#282b39] bg-[#151722] p-3">
