@@ -25,6 +25,13 @@ export default async function ExecutionDetailPage({ params }: Props) {
   const totalCount = steps.length || 1;
   const progress = Math.round((completedCount / totalCount) * 100);
 
+  const resultText =
+    execution.result == null
+      ? "(chưa có output hoặc đang chạy)"
+      : typeof execution.result === "string"
+      ? execution.result
+      : JSON.stringify(execution.result, null, 2);
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
@@ -111,8 +118,8 @@ export default async function ExecutionDetailPage({ params }: Props) {
 
         <div className="lg:col-span-2 rounded-xl border border-slate-800 bg-slate-950/60 p-4 flex flex-col gap-3">
           <h3 className="text-sm font-semibold text-white">Execution Result</h3>
-          <pre className="flex-1 text-xs text-slate-300 bg-slate-900/80 rounded-lg p-3 overflow-auto">
-            {execution.result ?? "(chưa có output hoặc đang chạy)"}
+          <pre className="flex-1 max-h-[820px] text-sm text-slate-300 bg-slate-900/80 rounded-lg p-3 overflow-y-auto overflow-x-auto">
+            {resultText}
           </pre>
         </div>
       </div>

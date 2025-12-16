@@ -160,6 +160,47 @@ function extractConfigFromPromptSystem(promptSystem?: string | null): Record<str
     return null;
 }
 
+function extractOutputExampleFromPromptSystem(promptSystem?: string | null): Record<string, any> | null {
+    if (!promptSystem) return null;
+
+    // Look for an OUTPUT section marker (common variants).
+    const lower = promptSystem.toLowerCase();
+    const markers = [
+        "### output json",
+        "### output",
+        "output json",
+        "output",
+    ];
+
+    let idx = -1;
+    for (const m of markers) {
+        idx = lower.indexOf(m);
+        if (idx !== -1) break;
+    }
+    if (idx === -1) return null;
+
+    const start = promptSystem.indexOf("{", idx);
+    if (start === -1) return null;
+
+    let depth = 0;
+    let end = -1;
+    for (let i = start; i < promptSystem.length; i += 1) {
+        const ch = promptSystem[i];
+        if (ch === "{") depth += 1;
+        if (ch === "}") {
+            depth -= 1;
+            if (depth === 0) {
+                end = i;
+                break;
+            }
+        }
+    }
+    if (end === -1) return null;
+
+    const jsonText = promptSystem.slice(start, end + 1);
+    return tryParseLooseJsonObject(jsonText);
+}
+
 function getAgentOutputKeys(agent: Agent | undefined): string[] {
     if (!agent) return [];
     const name = (agent.name || "").toLowerCase();
@@ -194,6 +235,14 @@ function getAgentOutputKeys(agent: Agent | undefined): string[] {
         }
 
         return schemaKeys;
+    }
+
+    // If output_schema isn't persisted yet, try to infer from the agent's prompt_system
+    // (many agents define a strict OUTPUT JSON example block).
+    const outputExample = extractOutputExampleFromPromptSystem(agent.prompt_system);
+    if (outputExample) {
+        const keys = Object.keys(outputExample);
+        if (keys.length > 0) return keys;
     }
 
     // Heuristic fallbacks for older agents without output_schema
