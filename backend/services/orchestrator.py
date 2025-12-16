@@ -195,6 +195,14 @@ class Orchestrator:
             except Exception:
                 pass
 
+        first_agent_step_id: Optional[str] = None
+        for s in steps:
+            if getattr(s, "type", None) == "AGENT":
+                first_agent_step_id = str(getattr(s, "id", ""))
+                break
+
+        input_source_applied = False
+
         for step in steps:
             step_key = str(step.id)
             if step_key in existing_steps:
@@ -279,17 +287,21 @@ class Orchestrator:
                     return execution
 
                 # Inject per-agent config from workflow WCS if present.
-                agent_config = workflow_wcs.get(str(agent.id)) if isinstance(workflow_wcs, dict) else None
+                raw_agent_config = workflow_wcs.get(str(agent.id)) if isinstance(workflow_wcs, dict) else None
 
-                # Workflow input source: allow the (first) agent to pull input
-                # from an upstream workflow's latest completed output.
-                if isinstance(agent_config, dict):
-                    input_source = agent_config.get("input_source")
+                # Apply workflow-level input_source only once (first agent step only).
+                is_first_agent_step = first_agent_step_id is not None and str(step.id) == first_agent_step_id
+                if (
+                    is_first_agent_step
+                    and not input_source_applied
+                    and len(existing_steps) == 0
+                    and isinstance(raw_agent_config, dict)
+                ):
+                    input_source = raw_agent_config.get("input_source")
                     if isinstance(input_source, dict) and input_source.get("type") == "workflow_output":
                         upstream_workflow_id = input_source.get("workflow_id")
                         policy = input_source.get("policy")
                         if policy != "latest_completed":
-                            # Only policy supported in approach 1.
                             exec_step = WorkflowExecutionStep(
                                 execution_id=execution.id,
                                 step_id=step.id,
@@ -328,9 +340,16 @@ class Orchestrator:
                             await self.session.refresh(execution)
                             return execution
 
-                        # Merge upstream output into current_data so it becomes
-                        # part of this agent input (and optionally selectable).
                         current_data.update(upstream_data)
+                        input_source_applied = True
+
+                # Sanitize config passed to agents:
+                # - First agent keeps input_source in config (so you can see it in input JSON)
+                # - Later agents never see input_source in config
+                agent_config = raw_agent_config
+                if isinstance(raw_agent_config, dict) and not is_first_agent_step and "input_source" in raw_agent_config:
+                    agent_config = dict(raw_agent_config)
+                    agent_config.pop("input_source", None)
 
                 # Determine which inputs should be passed to this agent.
                 agent_input: Dict[str, Any] = dict(current_data)
