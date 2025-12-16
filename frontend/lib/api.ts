@@ -334,8 +334,22 @@ export function getExecution(id: string) {
   return request<WorkflowExecution>(`/executions/${id}`);
 }
 
+export function listExecutions(params?: { limit?: number; projectId?: string | null }) {
+  const qp = new URLSearchParams();
+  if (typeof params?.limit === "number") qp.set("limit", String(params.limit));
+  if (params?.projectId) qp.set("project_id", params.projectId);
+  const qs = qp.toString();
+  return request<WorkflowExecution[]>(`/executions${qs ? `?${qs}` : ""}`);
+}
+
 export function listExecutionSteps(executionId: string) {
   return request<WorkflowExecutionStep[]>(`/executions/${executionId}/steps`);
+}
+
+export function deleteExecution(executionId: string) {
+  return request<void>(`/executions/${executionId}`, {
+    method: "DELETE",
+  });
 }
 
 export function runWorkflow(

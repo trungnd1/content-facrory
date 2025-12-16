@@ -4,7 +4,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db import AsyncSessionLocal, get_session
@@ -139,6 +139,41 @@ async def get_execution(
     if not execution:
         raise HTTPException(status_code=404, detail="Execution not found")
     return execution
+
+
+@router.delete("/{execution_id}", status_code=204)
+async def delete_execution(
+    execution_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    execution = await session.get(WorkflowExecutionModel, execution_id)
+    if not execution:
+        raise HTTPException(status_code=404, detail="Execution not found")
+
+    # Safety guard: don't delete executions that are actively running.
+    if (execution.status or "").lower() == "running":
+        raise HTTPException(status_code=409, detail="Cannot delete a running execution")
+
+    await session.delete(execution)
+    await session.commit()
+
+    return None
+
+
+@router.get("/", response_model=List[ExecutionOut])
+async def list_executions(
+    limit: int = 50,
+    project_id: Optional[str] = None,
+    session: AsyncSession = Depends(get_session),
+):
+    safe_limit = max(1, min(limit, 200))
+    stmt = select(WorkflowExecutionModel)
+    if project_id:
+        stmt = stmt.where(WorkflowExecutionModel.project_id == project_id)
+    stmt = stmt.order_by(desc(WorkflowExecutionModel.created_at)).limit(safe_limit)
+    result = await session.execute(stmt)
+    executions = result.scalars().all()
+    return executions
 
 
 @router.get("/{execution_id}/steps", response_model=List[ExecutionStepOut])

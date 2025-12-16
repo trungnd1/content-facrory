@@ -1,4 +1,6 @@
 import { getExecution, listExecutionSteps } from "@/lib/api";
+import { Sidebar } from "@/components/Sidebar";
+import { ProjectSelectorBar } from "@/components/ProjectSelectorBar";
 
 export const dynamic = "force-dynamic";
 
@@ -13,27 +15,33 @@ export default async function ExecutionDetailPage({ params }: Props) {
     listExecutionSteps(executionId).catch(() => []),
   ]);
 
-  if (!execution) {
-    return (
-      <p className="text-sm text-red-400">
-        Không tìm thấy execution với ID {executionId}.
-      </p>
-    );
-  }
-
   const completedCount = steps.filter((s) => s.status === "completed").length;
   const totalCount = steps.length || 1;
   const progress = Math.round((completedCount / totalCount) * 100);
 
   const resultText =
-    execution.result == null
+    execution?.result == null
       ? "(chưa có output hoặc đang chạy)"
       : typeof execution.result === "string"
       ? execution.result
       : JSON.stringify(execution.result, null, 2);
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="relative flex h-screen w-full overflow-hidden bg-background-light dark:bg-background-dark">
+      <Sidebar active="executions" />
+
+      <main className="flex-1 overflow-y-auto bg-background-light dark:bg-background-dark">
+        <div className="flex h-full grow flex-col">
+          <div className="px-6 md:px-12 flex flex-1 justify-center py-8">
+            <div className="flex flex-col max-w-[1200px] flex-1 gap-6">
+              <ProjectSelectorBar />
+
+              {!execution ? (
+                <p className="text-sm text-red-400">
+                  Không tìm thấy execution với ID {executionId}.
+                </p>
+              ) : (
+                <div className="flex flex-col gap-6">
       <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
         <div className="flex flex-col gap-2">
           <h1 className="text-2xl md:text-3xl font-bold text-white">
@@ -123,6 +131,12 @@ export default async function ExecutionDetailPage({ params }: Props) {
           </pre>
         </div>
       </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </main>
     </div>
   );
 }
